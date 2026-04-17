@@ -1,0 +1,21 @@
+{
+  "name": "mc-servicos",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "start": "npm run start -w backend"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "Portal de credenciais com atualizacao em tempo real",
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
