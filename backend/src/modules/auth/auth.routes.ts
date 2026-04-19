@@ -10,6 +10,7 @@ import {
   verifyRefreshToken,
 } from "../../utils/jwt";
 import { createAuditLog } from "../audit/audit.service";
+import { ensureUserMenuVisibilityColumns } from "../users/userMenuVisibility";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -23,10 +24,11 @@ const changePasswordSchema = z.object({
 const authRouter = Router();
 
 authRouter.post("/login", authRateLimit, async (req, res) => {
+  await ensureUserMenuVisibilityColumns();
   const body = loginSchema.parse(req.body);
 
   const userResult = await pool.query(
-    `SELECT id, name, email, password_hash, role, active
+    `SELECT id, name, email, password_hash, role, active, can_view_senhas, can_view_transacional, can_view_negocial
      FROM users
      WHERE email = $1
      LIMIT 1`,
@@ -41,6 +43,9 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
         password_hash: string;
         role: "admin" | "employee";
         active: boolean;
+        can_view_senhas: boolean;
+        can_view_transacional: boolean;
+        can_view_negocial: boolean;
       }
     | undefined;
 
@@ -67,6 +72,11 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
     sub: user.id,
     role: user.role,
     groupIds,
+    menuVisibility: {
+      senhas: Boolean(user.can_view_senhas),
+      transacional: Boolean(user.can_view_transacional),
+      negocial: Boolean(user.can_view_negocial),
+    },
   } as const;
 
   const accessToken = signAccessToken(payload);
@@ -95,6 +105,11 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
       email: user.email,
       role: user.role,
       groupIds,
+      menuVisibility: {
+        senhas: Boolean(user.can_view_senhas),
+        transacional: Boolean(user.can_view_transacional),
+        negocial: Boolean(user.can_view_negocial),
+      },
     },
   });
 });
@@ -135,16 +150,26 @@ authRouter.post("/logout", async (req, res) => {
 });
 
 authRouter.get("/me", requireAuth, async (req, res) => {
+  await ensureUserMenuVisibilityColumns();
   const user = req.user!;
   const result = await pool.query(
-    `SELECT id, name, email, role, active
+    `SELECT id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial
      FROM users
      WHERE id = $1
      LIMIT 1`,
     [user.id],
   );
   const me = result.rows[0] as
-    | { id: number; name: string; email: string; role: "admin" | "employee"; active: boolean }
+    | {
+        id: number;
+        name: string;
+        email: string;
+        role: "admin" | "employee";
+        active: boolean;
+        can_view_senhas: boolean;
+        can_view_transacional: boolean;
+        can_view_negocial: boolean;
+      }
     | undefined;
 
   if (!me || !me.active) {
@@ -166,6 +191,11 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     email: me.email,
     role: me.role,
     groupIds,
+    menuVisibility: {
+      senhas: Boolean(me.can_view_senhas),
+      transacional: Boolean(me.can_view_transacional),
+      negocial: Boolean(me.can_view_negocial),
+    },
   });
 });
 

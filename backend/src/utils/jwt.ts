@@ -28,6 +28,9 @@ function normalizePayload(raw: string | jwt.JwtPayload): JwtPayload {
   const sub = Number(raw.sub);
   const role = raw.role;
   const groupIds = raw.groupIds;
+  const rawMenuVisibility = raw.menuVisibility as
+    | { senhas?: unknown; transacional?: unknown; negocial?: unknown }
+    | undefined;
 
   if (
     !Number.isInteger(sub) ||
@@ -37,5 +40,15 @@ function normalizePayload(raw: string | jwt.JwtPayload): JwtPayload {
     throw new Error("Claims obrigatorias ausentes no token.");
   }
 
-  return { sub, role, groupIds: groupIds.map((id) => Number(id)) };
+  return {
+    sub,
+    role,
+    groupIds: groupIds.map((id) => Number(id)),
+    menuVisibility: {
+      senhas: rawMenuVisibility?.senhas === undefined ? true : Boolean(rawMenuVisibility.senhas),
+      transacional:
+        rawMenuVisibility?.transacional === undefined ? true : Boolean(rawMenuVisibility.transacional),
+      negocial: rawMenuVisibility?.negocial === undefined ? true : Boolean(rawMenuVisibility.negocial),
+    },
+  };
 }

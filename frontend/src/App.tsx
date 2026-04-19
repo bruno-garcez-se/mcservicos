@@ -1,32 +1,190 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "./contexts/AuthContext";
 import { changePassword } from "./services/authApi";
+import {
+  getAgentVpnStatus,
+  listAgentVpnConnections,
+  setAgentVpnConnection,
+  setAgentVpnEnabled,
+  VPN_AGENT_INSTALLER_URL,
+  type AgentVpnConnections,
+  type AgentVpnStatus,
+} from "./services/vpnAgentApi";
 import { LoginPage } from "./pages/LoginPage";
-import { SenhasPage } from "./pages/SenhasPage";
-import { UsersPage } from "./pages/UsersPage";
 
-type Tab = "inicio" | "senhas" | "usuarios";
+const SenhasPage = lazy(() => import("./pages/SenhasPage").then((module) => ({ default: module.SenhasPage })));
+const UsersPage = lazy(() => import("./pages/UsersPage").then((module) => ({ default: module.UsersPage })));
+const EmprestimosPage = lazy(() =>
+  import("./pages/EmprestimosPage").then((module) => ({ default: module.EmprestimosPage })),
+);
+const TransacionalPage = lazy(() =>
+  import("./pages/TransacionalPage").then((module) => ({ default: module.TransacionalPage })),
+);
+const ContatosPage = lazy(() =>
+  import("./pages/ContatosPage").then((module) => ({ default: module.ContatosPage })),
+);
+
+type Tab = "senhas" | "transacional" | "negocial" | "contatos" | "usuarios";
+const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
+
+function KeyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path fill="currentColor" d="M9 4a5 5 0 1 1 3.9 8.13L11.5 13.5V15h-2v2H7.5v2H5.5v-3.67l3.87-3.87A5 5 0 0 1 9 4Zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" />
+    </svg>
+  );
+}
+
+function ChartIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path fill="currentColor" d="M5 3a1 1 0 0 1 1 1v15h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm11 2a1 1 0 0 1 1 1v10a1 1 0 1 1-2 0V6a1 1 0 0 1 1-1Zm-4 4a1 1 0 0 1 1 1v6a1 1 0 1 1-2 0v-6a1 1 0 0 1 1-1Zm-4 3a1 1 0 0 1 1 1v3a1 1 0 1 1-2 0v-3a1 1 0 0 1 1-1Z" />
+    </svg>
+  );
+}
+
+function FunnelIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path fill="currentColor" d="M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 .8 1.6L14 14.5V20a1 1 0 0 1-1.45.9l-3-1.5A1 1 0 0 1 9 18.5v-4L3.2 5.6A1 1 0 0 1 3 5Z" />
+    </svg>
+  );
+}
+
+function ContactsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path fill="currentColor" d="M7.2 3a2.2 2.2 0 0 0-2.1 2.7c1.2 5.3 5.9 10 11.2 11.2a2.2 2.2 0 0 0 2.7-2.1v-2a1.2 1.2 0 0 0-1-1.2l-2.7-.6a1.2 1.2 0 0 0-1.2.5l-.8 1.1a8.9 8.9 0 0 1-3.8-3.8l1.1-.8a1.2 1.2 0 0 0 .5-1.2L10.4 4a1.2 1.2 0 0 0-1.2-1h-2Z" />
+    </svg>
+  );
+}
+
+function UsersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M16 11a4 4 0 1 0-2.65-7 4 4 0 0 0 0 7ZM7 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.31 0-6 1.79-6 4v1h12v-1c0-2.21-2.69-4-6-4Zm9 0c-.29 0-.56.02-.83.05 1.14.8 1.83 1.9 1.83 3.2V20h7v-1c0-2.21-2.69-4-6-4Z"
+      />
+    </svg>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M17 8h-1V6a4 4 0 1 0-8 0v2H7a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2Zm-7-2a2 2 0 1 1 4 0v2h-4V6Zm2 11a2 2 0 0 1-1-3.73V12a1 1 0 1 1 2 0v1.27A2 2 0 0 1 12 17Z"
+      />
+    </svg>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M11 3a1 1 0 0 1 1 1v5a1 1 0 1 1-2 0V5H5v14h5v-4a1 1 0 1 1 2 0v5a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6Zm6.59 5.59L21 12l-3.41 3.41a1 1 0 0 1-1.42-1.42L17.17 13H10a1 1 0 1 1 0-2h7.17l-1-1a1 1 0 0 1 1.42-1.41Z"
+      />
+    </svg>
+  );
+}
+
+function InstallAgentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 3a1 1 0 0 1 1 1v8.17l2.59-2.58a1 1 0 1 1 1.41 1.42l-4.3 4.3a1 1 0 0 1-1.4 0l-4.3-4.3a1 1 0 1 1 1.41-1.42L11 12.17V4a1 1 0 0 1 1-1Zm-7 14a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1Z"
+      />
+    </svg>
+  );
+}
 
 export default function App() {
   const { user, loading, signOut } = useAuth();
-  const [tab, setTab] = useState<Tab>("senhas");
+  const [tab, setTab] = useState<Tab>(() => {
+    try {
+      const saved = localStorage.getItem("portal:active-tab");
+      if (saved === "senhas" || saved === "transacional" || saved === "negocial" || saved === "contatos" || saved === "usuarios") {
+        return saved;
+      }
+    } catch {
+      // Ignora erro de storage e usa padrão.
+    }
+    return "senhas";
+  });
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
+  const [vpnStatus, setVpnStatus] = useState<AgentVpnStatus | null>(null);
+  const [vpnConnections, setVpnConnections] = useState<AgentVpnConnections | null>(null);
+  const [selectedVpnName, setSelectedVpnName] = useState("");
+  const [vpnBusy, setVpnBusy] = useState(false);
+  const [isVpnInstallModalOpen, setIsVpnInstallModalOpen] = useState(false);
+  const [isVpnConfigModalOpen, setIsVpnConfigModalOpen] = useState(false);
+  const [vpnFeedbackMessage, setVpnFeedbackMessage] = useState("");
+  const [vpnFeedbackTone, setVpnFeedbackTone] = useState<"info" | "error">("info");
+  const [vpnFeedbackAction, setVpnFeedbackAction] = useState<"install" | null>(null);
+  const vpnAutoConfigAttemptRef = useRef<string>("");
+  const vpnFeedbackTimeoutRef = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const isAdmin = user?.role === "admin";
-  const showInicio = isAdmin;
-  const roleLabel = user?.role === "admin" ? "Administrador" : "Usuario";
+  const roleLabel = user?.role === "admin" ? "Administrador" : "Usuário";
   const userInitial = user?.name?.trim()?.charAt(0)?.toUpperCase() ?? "U";
+  const menuVisibility = user?.menuVisibility ?? {
+    senhas: true,
+    transacional: true,
+    negocial: true,
+  };
+  const canViewSenhas = isAdmin || menuVisibility.senhas;
+  const canViewTransacional = isAdmin || menuVisibility.transacional;
+  const canViewNegocial = isAdmin || menuVisibility.negocial;
+
+  const loadVpnStatus = useCallback(async () => {
+    const status = await getAgentVpnStatus();
+    setVpnStatus(status);
+  }, []);
+
+  const loadVpnConnections = useCallback(async () => {
+    const data = await listAgentVpnConnections();
+    setVpnConnections(data);
+    if (data.selectedConnectionName) {
+      setSelectedVpnName(data.selectedConnectionName);
+      return;
+    }
+    if (!selectedVpnName && data.connections.length > 0) {
+      setSelectedVpnName(data.connections[0]);
+    }
+  }, [selectedVpnName]);
 
   useEffect(() => {
-    if (!showInicio && tab === "inicio") {
-      setTab("senhas");
+    const tabAllowed =
+      tab === "contatos" ||
+      tab === "usuarios" ||
+      (tab === "senhas" && canViewSenhas) ||
+      (tab === "transacional" && canViewTransacional) ||
+      (tab === "negocial" && canViewNegocial);
+    if (isAdmin && tabAllowed) return;
+    if (!isAdmin && tab === "usuarios") {
+      if (canViewSenhas) setTab("senhas");
+      else if (canViewTransacional) setTab("transacional");
+      else if (canViewNegocial) setTab("negocial");
+      else setTab("contatos");
+      return;
     }
-  }, [showInicio, tab]);
+    if (!tabAllowed) {
+      if (canViewSenhas) setTab("senhas");
+      else if (canViewTransacional) setTab("transacional");
+      else if (canViewNegocial) setTab("negocial");
+      else setTab("contatos");
+    }
+  }, [isAdmin, tab, canViewSenhas, canViewTransacional, canViewNegocial]);
 
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
@@ -38,6 +196,46 @@ export default function App() {
     window.addEventListener("mousedown", onClickOutside);
     return () => window.removeEventListener("mousedown", onClickOutside);
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("portal:active-tab", tab);
+    } catch {
+      // Ignora erro de storage para não bloquear a navegação.
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const loadCurrent = async () => {
+      if (!active) return;
+      await Promise.all([loadVpnStatus(), loadVpnConnections()]);
+    };
+    void loadCurrent();
+    const timer = window.setInterval(() => {
+      void loadCurrent();
+    }, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [user, loadVpnStatus, loadVpnConnections]);
+
+  useEffect(() => {
+    const onExternalVpnStatusSync = (event: Event) => {
+      const customEvent = event as CustomEvent<AgentVpnStatus | undefined>;
+      const nextStatus = customEvent.detail;
+      if (nextStatus) {
+        setVpnStatus(nextStatus);
+        return;
+      }
+      void loadVpnStatus();
+    };
+
+    window.addEventListener(VPN_STATUS_SYNC_EVENT, onExternalVpnStatusSync as EventListener);
+    return () => window.removeEventListener(VPN_STATUS_SYNC_EVENT, onExternalVpnStatusSync as EventListener);
+  }, [loadVpnStatus]);
 
   const openPasswordModal = () => {
     setCurrentPassword("");
@@ -52,7 +250,7 @@ export default function App() {
     event.preventDefault();
     setPasswordMessage("");
     if (newPassword !== confirmNewPassword) {
-      setPasswordMessage("A confirmacao da nova senha nao confere.");
+      setPasswordMessage("A confirmação da nova senha não confere.");
       return;
     }
     try {
@@ -62,36 +260,308 @@ export default function App() {
       setNewPassword("");
       setConfirmNewPassword("");
     } catch {
-      setPasswordMessage("Nao foi possivel alterar a senha.");
+      setPasswordMessage("Não foi possível alterar a senha.");
+    }
+  };
+  const passwordMessageTone: "success" | "error" | "warning" = (() => {
+    const text = passwordMessage.trim().toLowerCase();
+    if (!text) return "warning";
+    if (text.includes("não foi possível") || text.includes("falha") || text.includes("erro")) return "error";
+    if (text.includes("sucesso")) return "success";
+    return "warning";
+  })();
+  const passwordMessageLabel =
+    passwordMessageTone === "success" ? "Sucesso" : passwordMessageTone === "error" ? "Erro" : "Aviso";
+
+  const vpnConnected = Boolean(vpnStatus?.connected);
+  const vpnAgentReachable = Boolean(vpnStatus?.agentReachable);
+  const vpnNeedsSelection = Boolean(vpnStatus?.needsSelection);
+  const vpnCanToggle = Boolean(vpnStatus?.available && !vpnNeedsSelection);
+  const vpnLooksWithoutAgent =
+    !vpnAgentReachable ||
+    (!vpnStatus?.available && !vpnStatus?.configured && !vpnStatus?.connectionExists && !vpnConnected);
+  const vpnTooltip =
+    vpnStatus?.message ??
+    (vpnLooksWithoutAgent
+      ? "Agente VPN não instalado. Clique para instalar."
+      : vpnNeedsSelection
+        ? "Selecione a VPN deste computador para habilitar o controle."
+        : vpnCanToggle
+      ? vpnConnected
+        ? "VPN ligada"
+        : "VPN desligada"
+      : "Controle de VPN indisponível neste ambiente.");
+
+  const openInstallAgentFlow = () => {
+    setVpnFeedbackTone("info");
+    setVpnFeedbackMessage("Agente VPN não instalado. Instale o agente para habilitar o ligar/desligar.");
+    setVpnFeedbackAction("install");
+    setIsVpnInstallModalOpen(true);
+  };
+
+  const onToggleVpn = async () => {
+    const shouldEnable = !vpnConnected;
+    if (!vpnCanToggle) {
+      if (vpnNeedsSelection) {
+        setVpnFeedbackTone("info");
+        setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
+        setVpnFeedbackAction(null);
+        setIsVpnConfigModalOpen(true);
+        await loadVpnConnections();
+        return;
+      }
+      openInstallAgentFlow();
+      return;
+    }
+    if (vpnLooksWithoutAgent) {
+      openInstallAgentFlow();
+      return;
+    }
+    if (!vpnAgentReachable) {
+      setVpnFeedbackTone("info");
+      setVpnFeedbackMessage("Agente VPN não instalado. Instale o agente para habilitar o ligar/desligar.");
+      setVpnFeedbackAction("install");
+      setIsVpnInstallModalOpen(true);
+      return;
+    }
+    if (vpnNeedsSelection) {
+      setVpnFeedbackTone("info");
+      setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
+      setVpnFeedbackAction(null);
+      setIsVpnConfigModalOpen(true);
+      await loadVpnConnections();
+      return;
+    }
+    if (vpnBusy) return;
+    setVpnBusy(true);
+    try {
+      const next = await setAgentVpnEnabled(!vpnConnected);
+      setVpnStatus(next);
+      const nextLooksWithoutAgent =
+        !next.agentReachable ||
+        (!next.available && !next.configured && !next.connectionExists && !next.connected);
+      if (nextLooksWithoutAgent) {
+        openInstallAgentFlow();
+        return;
+      }
+      if (shouldEnable && !next.connected) {
+        setVpnFeedbackTone("error");
+        setVpnFeedbackAction(null);
+        setVpnFeedbackMessage(next.message ?? "Não foi possível ligar a VPN. Verifique a conexão do Windows.");
+        return;
+      }
+      if (!shouldEnable && next.connected) {
+        setVpnFeedbackTone("error");
+        setVpnFeedbackAction(null);
+        setVpnFeedbackMessage(next.message ?? "Não foi possível desligar a VPN neste momento.");
+        return;
+      }
+    } finally {
+      setVpnBusy(false);
+      await loadVpnStatus();
     }
   };
 
-  if (loading) return <p className="screen-center">Carregando sessao...</p>;
+  const onVpnBadgeInteract = async (intentToggle: boolean) => {
+    if (!vpnCanToggle) {
+      if (vpnNeedsSelection) {
+        setVpnFeedbackTone("info");
+        setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
+        setVpnFeedbackAction(null);
+        setIsVpnConfigModalOpen(true);
+        await loadVpnConnections();
+        return;
+      }
+      openInstallAgentFlow();
+      return;
+    }
+    if (vpnLooksWithoutAgent) {
+      openInstallAgentFlow();
+      return;
+    }
+    if (vpnNeedsSelection) {
+      setVpnFeedbackTone("info");
+      setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
+      setVpnFeedbackAction(null);
+      setIsVpnConfigModalOpen(true);
+      await loadVpnConnections();
+      return;
+    }
+    if (!intentToggle) return;
+    await onToggleVpn();
+  };
+
+  const onInstallVpnAgent = () => {
+    window.open(VPN_AGENT_INSTALLER_URL, "_blank", "noopener,noreferrer");
+    setVpnFeedbackTone("info");
+    setVpnFeedbackMessage("Download do instalador iniciado.");
+    setVpnFeedbackAction(null);
+    setIsVpnInstallModalOpen(false);
+    setIsVpnConfigModalOpen(false);
+  };
+
+  useEffect(() => {
+    if (vpnFeedbackTimeoutRef.current) {
+      window.clearTimeout(vpnFeedbackTimeoutRef.current);
+      vpnFeedbackTimeoutRef.current = null;
+    }
+    if (!vpnFeedbackMessage) {
+      setVpnFeedbackAction(null);
+      return;
+    }
+    vpnFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setVpnFeedbackMessage("");
+      setVpnFeedbackAction(null);
+      vpnFeedbackTimeoutRef.current = null;
+    }, 4500);
+    return () => {
+      if (vpnFeedbackTimeoutRef.current) {
+        window.clearTimeout(vpnFeedbackTimeoutRef.current);
+        vpnFeedbackTimeoutRef.current = null;
+      }
+    };
+  }, [vpnFeedbackMessage]);
+
+  const onSaveVpnSelection = async () => {
+    if (!selectedVpnName.trim()) return;
+    setVpnBusy(true);
+    try {
+      const next = await setAgentVpnConnection(selectedVpnName.trim());
+      setVpnStatus(next);
+      await loadVpnConnections();
+      setIsVpnConfigModalOpen(false);
+    } finally {
+      setVpnBusy(false);
+      await loadVpnStatus();
+    }
+  };
+
+  useEffect(() => {
+    if (!vpnStatus?.agentReachable || !vpnStatus.needsSelection || vpnBusy) return;
+    const availableConnections = vpnConnections?.connections ?? [];
+    if (availableConnections.length !== 1) return;
+
+    const singleConnection = availableConnections[0];
+    if (!singleConnection) return;
+    if (vpnAutoConfigAttemptRef.current === singleConnection) return;
+
+    vpnAutoConfigAttemptRef.current = singleConnection;
+    setSelectedVpnName(singleConnection);
+
+    const applySingleConnection = async () => {
+      setVpnBusy(true);
+      try {
+        const next = await setAgentVpnConnection(singleConnection);
+        setVpnStatus(next);
+        await loadVpnConnections();
+        setIsVpnConfigModalOpen(false);
+      } finally {
+        setVpnBusy(false);
+        await loadVpnStatus();
+      }
+    };
+
+    void applySingleConnection();
+  }, [vpnStatus, vpnConnections, vpnBusy, loadVpnConnections, loadVpnStatus]);
+
+  if (loading) return <p className="screen-center">Carregando sessão...</p>;
   if (!user) return <LoginPage />;
 
   return (
     <div className="layout">
       <header className="topbar">
-        <strong>MC Servicos - Portal interno</strong>
+        <strong className="topbar-brand" aria-label="Portal MC Serviços">
+          <img src="/logo-topbar-mc.png" alt="Portal MC Serviços" />
+        </strong>
         <nav>
-          {showInicio ? (
+          {canViewSenhas ? (
             <button
               type="button"
-              onClick={() => setTab("inicio")}
-              className={`nav-tab ${tab === "inicio" ? "active" : ""}`}
+              onClick={() => setTab("senhas")}
+              className={`nav-tab ${tab === "senhas" ? "active" : ""}`}
             >
-              Inicio
+              <span className="nav-tab-icon-label">
+                <KeyIcon />
+                <span>Senhas</span>
+              </span>
+            </button>
+          ) : null}
+          {canViewTransacional ? (
+            <button
+              type="button"
+              onClick={() => setTab("transacional")}
+              className={`nav-tab ${tab === "transacional" ? "active" : ""}`}
+            >
+              <span className="nav-tab-icon-label">
+                <ChartIcon />
+                <span>Transacional</span>
+              </span>
+            </button>
+          ) : null}
+          {canViewNegocial ? (
+            <button
+              type="button"
+              onClick={() => setTab("negocial")}
+              className={`nav-tab ${tab === "negocial" ? "active" : ""}`}
+            >
+              <span className="nav-tab-icon-label">
+                <FunnelIcon />
+                <span>Negocial</span>
+              </span>
             </button>
           ) : null}
           <button
             type="button"
-            onClick={() => setTab("senhas")}
-            className={`nav-tab ${tab === "senhas" ? "active" : ""}`}
+            onClick={() => setTab("contatos")}
+            className={`nav-tab ${tab === "contatos" ? "active" : ""}`}
           >
-            Senhas
+            <span className="nav-tab-icon-label">
+              <ContactsIcon />
+              <span>Contatos</span>
+            </span>
           </button>
         </nav>
-        <div className="user-actions" ref={menuRef}>
+        <div className="topbar-right">
+          <div
+          className={`vpn-badge ${!vpnCanToggle ? "is-clickable" : ""}`}
+            title={vpnTooltip}
+          onMouseDown={() => {
+            if (!vpnCanToggle) {
+              void onVpnBadgeInteract(false);
+            }
+          }}
+          onClick={() => {
+            void onVpnBadgeInteract(false);
+          }}
+          >
+            <span
+              className={`vpn-status-dot ${vpnConnected ? "is-on" : "is-off"} ${!vpnCanToggle ? "is-disabled" : ""}`}
+              aria-hidden="true"
+            />
+            <span className="vpn-badge-title">VPN</span>
+            <button
+              type="button"
+              className={`vpn-switch ${vpnConnected ? "is-on" : "is-off"} ${!vpnCanToggle ? "is-disabled" : ""}`}
+              role="switch"
+              aria-checked={vpnConnected}
+              aria-label={vpnConnected ? "Desligar VPN" : "Ligar VPN"}
+              aria-disabled={!vpnCanToggle || vpnBusy}
+              disabled={vpnBusy}
+              onMouseDown={(event) => {
+                event.stopPropagation();
+                if (!vpnCanToggle) {
+                  void onVpnBadgeInteract(true);
+                }
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onVpnBadgeInteract(true);
+              }}
+            >
+              <span className="vpn-switch-knob" />
+            </button>
+          </div>
+          <div className="user-actions" ref={menuRef}>
           <button
             type="button"
             className={`user-menu-trigger ${isUserMenuOpen ? "is-open" : ""}`}
@@ -105,59 +575,65 @@ export default function App() {
             </span>
             <span className="user-menu-caret">▾</span>
           </button>
-          {isUserMenuOpen ? (
-            <div className="user-menu-dropdown">
-              {isAdmin ? (
+            {isUserMenuOpen ? (
+              <div className="user-menu-dropdown">
+                {isAdmin ? (
+                  <button
+                    className="user-menu-item"
+                    type="button"
+                    onClick={() => {
+                      setTab("usuarios");
+                      setIsUserMenuOpen(false);
+                    }}
+                  >
+                    <span className="menu-item-icon" aria-hidden="true">
+                      <UsersIcon />
+                    </span>
+                    <span>Usuários</span>
+                  </button>
+                ) : null}
+                <button className="user-menu-item" type="button" onClick={openPasswordModal}>
+                  <span className="menu-item-icon" aria-hidden="true">
+                    <LockIcon />
+                  </span>
+                  <span>Alterar senha</span>
+                </button>
                 <button
                   className="user-menu-item"
                   type="button"
                   onClick={() => {
-                    setTab("usuarios");
                     setIsUserMenuOpen(false);
+                    void signOut();
                   }}
                 >
-                  <span className="menu-item-icon">👥</span>
-                  <span>Usuarios</span>
+                  <span className="menu-item-icon" aria-hidden="true">
+                    <LogoutIcon />
+                  </span>
+                  <span>Sair</span>
                 </button>
-              ) : null}
-              <button className="user-menu-item" type="button" onClick={openPasswordModal}>
-                <span className="menu-item-icon">🔐</span>
-                <span>Alterar senha</span>
-              </button>
-              <button
-                className="user-menu-item"
-                type="button"
-                onClick={() => {
-                  setIsUserMenuOpen(false);
-                  void signOut();
-                }}
-              >
-                <span className="menu-item-icon">↪</span>
-                <span>Sair</span>
-              </button>
-            </div>
-          ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       </header>
 
       <main>
-        {tab === "inicio" && showInicio ? (
-          <section className="card">
-            <h2>Inicio</h2>
-            <p>Espaco reservado para os demais modulos do seu sistema.</p>
-          </section>
-        ) : null}
-        {tab === "senhas" ? <SenhasPage /> : null}
-        {tab === "usuarios" && isAdmin ? <UsersPage /> : null}
+        <Suspense fallback={<p className="screen-center">Carregando módulo...</p>}>
+          {tab === "senhas" && canViewSenhas ? <SenhasPage /> : null}
+          {tab === "transacional" && canViewTransacional ? <TransacionalPage /> : null}
+          {tab === "negocial" && canViewNegocial ? <EmprestimosPage /> : null}
+          {tab === "contatos" ? <ContatosPage /> : null}
+          {tab === "usuarios" && isAdmin ? <UsersPage /> : null}
+        </Suspense>
       </main>
 
       {isPasswordModalOpen ? (
-        <div className="modal-backdrop" onClick={() => setIsPasswordModalOpen(false)}>
-          <section className="card modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
             <div className="section-header-row">
               <h2>Alterar senha</h2>
               <button type="button" onClick={() => setIsPasswordModalOpen(false)}>
-                Fechar
+                X
               </button>
             </div>
             <form onSubmit={onSubmitPasswordChange} className="form-stack">
@@ -195,8 +671,102 @@ export default function App() {
                 </button>
               </div>
             </form>
-            {passwordMessage ? <p>{passwordMessage}</p> : null}
+            {passwordMessage ? <p>{`${passwordMessageLabel}: ${passwordMessage}`}</p> : null}
           </section>
+        </div>
+      ) : null}
+      {isVpnInstallModalOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h2>Instalar agente VPN</h2>
+              <button type="button" onClick={() => setIsVpnInstallModalOpen(false)}>
+                X
+              </button>
+            </div>
+            <p className="section-subtitle">
+              Para controlar a VPN pelo sistema, é necessário instalar o agente local no Windows.
+            </p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setIsVpnInstallModalOpen(false)}>
+                Agora não
+              </button>
+              <button type="button" className="primary-button" onClick={onInstallVpnAgent}>
+                Instalar agora
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {isVpnConfigModalOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h2>Selecionar VPN deste computador</h2>
+              <button type="button" onClick={() => setIsVpnConfigModalOpen(false)}>
+                X
+              </button>
+            </div>
+            <p className="section-subtitle">
+              Escolha a conexão VPN disponível no Windows para o agente controlar o ligar/desligar.
+            </p>
+            <label>
+              Conexão VPN
+              <select
+                value={selectedVpnName}
+                onChange={(event) => setSelectedVpnName(event.target.value)}
+                disabled={vpnBusy}
+              >
+                <option value="">Selecione...</option>
+                {(vpnConnections?.connections ?? []).map((name) => (
+                  <option key={`vpn-connection-${name}`} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {vpnConnections?.connections.length === 0 ? (
+              <p className="error-text">
+                Nenhuma conexão VPN foi encontrada no Windows. Crie a VPN primeiro nas configurações do sistema.
+              </p>
+            ) : null}
+            <div className="modal-actions">
+              <button type="button" onClick={() => setIsVpnConfigModalOpen(false)} disabled={vpnBusy}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void onSaveVpnSelection()}
+                disabled={vpnBusy || !selectedVpnName.trim()}
+              >
+                {vpnBusy ? "Salvando..." : "Salvar seleção"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {vpnFeedbackMessage ? (
+        <div className={`floating-feedback floating-feedback-${vpnFeedbackTone}`}>
+          <span>{`${vpnFeedbackTone === "error" ? "Erro" : "Aviso"}: ${vpnFeedbackMessage}`}</span>
+          <div className="vpn-feedback-actions">
+            {vpnFeedbackAction === "install" ? (
+              <button type="button" className="vpn-feedback-install-button" onClick={onInstallVpnAgent}>
+                <InstallAgentIcon />
+                <span>Instalar agora</span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="vpn-feedback-close-button"
+              onClick={() => {
+                setVpnFeedbackMessage("");
+                setVpnFeedbackAction(null);
+              }}
+            >
+              X
+            </button>
+          </div>
         </div>
       ) : null}
     </div>

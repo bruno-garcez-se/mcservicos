@@ -11,6 +11,11 @@ type UserForm = {
   role: "admin" | "employee";
   active: boolean;
   groupIds: number[];
+  menuVisibility: {
+    senhas: boolean;
+    transacional: boolean;
+    negocial: boolean;
+  };
 };
 
 const emptyForm: UserForm = {
@@ -20,7 +25,42 @@ const emptyForm: UserForm = {
   role: "employee",
   active: true,
   groupIds: [],
+  menuVisibility: {
+    senhas: true,
+    transacional: true,
+    negocial: true,
+  },
 };
+
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path fill="currentColor" d="M11 5a1 1 0 1 1 2 0v6h6a1 1 0 1 1 0 2h-6v6a1 1 0 1 1-2 0v-6H5a1 1 0 1 1 0-2h6V5Z" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="m3 17.25 9.81-9.81 2.75 2.75L5.75 20H3v-2.75Zm14.71-8.79-2.75-2.75 1.39-1.39a1 1 0 0 1 1.41 0l1.34 1.34a1 1 0 0 1 0 1.41l-1.39 1.39Z"
+      />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M9 3a1 1 0 0 0-1 1v1H5a1 1 0 1 0 0 2h.7l.8 12.06A2 2 0 0 0 8.5 21h7a2 2 0 0 0 1.99-1.94L18.3 7H19a1 1 0 1 0 0-2h-3V4a1 1 0 0 0-1-1H9Zm1 2V5h4V5h-4Zm-1.3 2h6.6l-.77 11.5a.5.5 0 0 1-.5.5h-4.06a.5.5 0 0 1-.5-.5L8.7 7Zm2.3 2a1 1 0 0 0-1 1v6a1 1 0 1 0 2 0v-6a1 1 0 0 0-1-1Zm4 0a1 1 0 0 0-1 1v6a1 1 0 1 0 2 0v-6a1 1 0 0 0-1-1Z"
+      />
+    </svg>
+  );
+}
 
 export function UsersPage() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -31,8 +71,18 @@ export function UsersPage() {
   const [message, setMessage] = useState("");
   const groupNameById = new Map(groups.map((group) => [group.id, group.name]));
   const roleLabel = (role: "admin" | "employee") =>
-    role === "admin" ? "Administrador" : "Usuario";
+    role === "admin" ? "Administrador" : "Usuário";
   const selectedUser = form.id ? users.find((user) => user.id === form.id) : undefined;
+  const feedbackLabel = (text: string): string => {
+    const normalized = text.toLowerCase();
+    if (normalized.includes("falha") || normalized.includes("não foi possível") || normalized.includes("erro")) {
+      return "Erro";
+    }
+    if (normalized.includes("criado") || normalized.includes("atualizado") || normalized.includes("excluído")) {
+      return "Sucesso";
+    }
+    return "Aviso";
+  };
 
   async function loadData() {
     setLoading(true);
@@ -41,7 +91,7 @@ export function UsersPage() {
       setUsers(usersData);
       setGroups(groupsData);
     } catch {
-      setMessage("Falha ao carregar usuarios.");
+      setMessage("Falha ao carregar usuários.");
     } finally {
       setLoading(false);
     }
@@ -63,8 +113,9 @@ export function UsersPage() {
           role: form.role,
           active: form.active,
           groupIds: form.groupIds,
+          menuVisibility: form.menuVisibility,
         });
-        setMessage("Usuario atualizado.");
+        setMessage("Usuário atualizado.");
       } else {
         await createUser({
           name: form.name,
@@ -73,14 +124,15 @@ export function UsersPage() {
           role: form.role,
           active: form.active,
           groupIds: form.groupIds,
+          menuVisibility: form.menuVisibility,
         });
-        setMessage("Usuario criado.");
+        setMessage("Usuário criado.");
       }
       setForm(emptyForm);
       setIsFormOpen(false);
       await loadData();
     } catch {
-      setMessage("Nao foi possivel salvar o usuario.");
+      setMessage("Não foi possível salvar o usuário.");
     }
   };
 
@@ -94,6 +146,11 @@ export function UsersPage() {
       role: user.role,
       active: user.active,
       groupIds: user.groupIds ?? [],
+      menuVisibility: user.menuVisibility ?? {
+        senhas: true,
+        transacional: true,
+        negocial: true,
+      },
     });
     setIsFormOpen(true);
   };
@@ -103,10 +160,10 @@ export function UsersPage() {
     const targetLabel = selectedUser
       ? `${selectedUser.name} (${selectedUser.email})`
       : `ID ${form.id}`;
-    if (!confirm(`Deseja realmente excluir o usuario ${targetLabel}?`)) return;
+    if (!confirm(`Deseja realmente excluir o usuário ${targetLabel}?`)) return;
     try {
       await deleteUser(form.id);
-      setMessage("Usuario excluido.");
+      setMessage("Usuário excluído.");
       setForm(emptyForm);
       setIsFormOpen(false);
       await loadData();
@@ -119,27 +176,30 @@ export function UsersPage() {
         (error as { response?: { data?: { message?: string } } }).response?.data?.message
           ? (error as { response?: { data?: { message?: string } } }).response?.data?.message
           : null;
-      setMessage(apiMessage ?? "Nao foi possivel excluir o usuario.");
+      setMessage(apiMessage ?? "Não foi possível excluir o usuário.");
     }
   };
 
-  if (loading) return <p>Carregando usuarios...</p>;
+  if (loading) return <p>Carregando usuários...</p>;
 
   return (
     <div className="page-grid single-column">
       <section className="card">
         <div className="section-header-row">
-          <h2>Usuarios cadastrados</h2>
+          <h2>Usuários cadastrados</h2>
           <button
             type="button"
-            className="primary-button"
+            className="transaction-top-action transaction-top-action-new"
             onClick={() => {
               setMessage("");
               setForm(emptyForm);
               setIsFormOpen(true);
             }}
           >
-            NOVO
+            <span className="button-icon-inline">
+              <PlusIcon />
+              <span>Novo</span>
+            </span>
           </button>
         </div>
         <table>
@@ -150,7 +210,7 @@ export function UsersPage() {
               <th>Perfil</th>
               <th>Status</th>
               <th>Grupos</th>
-              <th>Acoes</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody>
@@ -168,8 +228,14 @@ export function UsersPage() {
                         .join(", ")}
                 </td>
                 <td>
-                  <button type="button" onClick={() => onEdit(user)}>
-                    Editar
+                  <button
+                    type="button"
+                    className="transaction-icon-button"
+                    title="Editar usuário"
+                    aria-label="Editar usuário"
+                    onClick={() => onEdit(user)}
+                  >
+                    <EditIcon />
                   </button>
                 </td>
               </tr>
@@ -179,17 +245,10 @@ export function UsersPage() {
       </section>
 
       {isFormOpen ? (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            setForm(emptyForm);
-            setIsFormOpen(false);
-            setMessage("");
-          }}
-        >
-          <section className="card modal-card" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-users" onClick={(event) => event.stopPropagation()}>
             <div className="section-header-row">
-              <h2>{form.id ? "Editar usuario" : "Novo usuario"}</h2>
+              <h2>{form.id ? "Editar usuário" : "Novo usuário"}</h2>
               <button
                 type="button"
                 onClick={() => {
@@ -198,12 +257,12 @@ export function UsersPage() {
                   setMessage("");
                 }}
               >
-                Fechar
+                X
               </button>
             </div>
             {form.id ? (
               <p className="section-subtitle">
-                Usuario selecionado para edicao:{" "}
+                Usuário selecionado para edição:{" "}
                 <strong>
                   {selectedUser?.name ?? form.name} ({selectedUser?.email ?? form.email})
                 </strong>
@@ -247,7 +306,7 @@ export function UsersPage() {
                     }))
                   }
                 >
-                  <option value="employee">Usuario</option>
+                  <option value="employee">Usuário</option>
                   <option value="admin">Administrador</option>
                 </select>
               </label>
@@ -257,7 +316,7 @@ export function UsersPage() {
                   checked={form.active}
                   onChange={(e) => setForm((prev) => ({ ...prev, active: e.target.checked }))}
                 />
-                Usuario ativo
+                Usuário ativo
               </label>
 
               <fieldset>
@@ -280,9 +339,51 @@ export function UsersPage() {
                   </label>
                 ))}
               </fieldset>
+              <fieldset>
+                <legend>Menus visíveis</legend>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.menuVisibility.senhas}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        menuVisibility: { ...prev.menuVisibility, senhas: e.target.checked },
+                      }))
+                    }
+                  />
+                  Senhas
+                </label>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.menuVisibility.transacional}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        menuVisibility: { ...prev.menuVisibility, transacional: e.target.checked },
+                      }))
+                    }
+                  />
+                  Transacional
+                </label>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.menuVisibility.negocial}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        menuVisibility: { ...prev.menuVisibility, negocial: e.target.checked },
+                      }))
+                    }
+                  />
+                  Negocial
+                </label>
+              </fieldset>
 
               <div className="row">
-                <button type="submit">{form.id ? "Salvar" : "Criar usuario"}</button>
+                <button type="submit">{form.id ? "Salvar" : "Criar usuário"}</button>
                 <button
                   type="button"
                   onClick={() => {
@@ -294,13 +395,19 @@ export function UsersPage() {
                   Cancelar
                 </button>
                 {form.id ? (
-                  <button type="button" className="danger-button" onClick={() => void onDelete()}>
-                    Excluir usuario
+                  <button
+                    type="button"
+                    className="transaction-icon-button danger"
+                    title="Excluir usuário"
+                    aria-label="Excluir usuário"
+                    onClick={() => void onDelete()}
+                  >
+                    <TrashIcon />
                   </button>
                 ) : null}
               </div>
             </form>
-            {message ? <p>{message}</p> : null}
+            {message ? <p>{`${feedbackLabel(message)}: ${message}`}</p> : null}
           </section>
         </div>
       ) : null}

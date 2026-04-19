@@ -1,0 +1,255 @@
+import { execFile } from "child_process";
+import cors from "cors";
+import dotenv from "dotenv";
+import express from "express";
+import { promises as fs } from "fs";
+import path from "path";
+import { promisify } from "util";
+
+dotenv.config();
+
+const execFileAsync = promisify(execFile);
+const app = express();
+
+const port = Number(process.env.PORT || 48321);
+const configuredFromEnv = (process.env.VPN_CONNECTION_NAME || "").trim();
+const apiToken = (process.env.AGENT_API_TOKEN || "").trim();
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+const configFilePath = process.env.AGENT_CONFIG_PATH?.trim()
+  ? path.resolve(process.env.AGENT_CONFIG_PATH.trim())
+  : path.resolve(process.cwd(), "agent-config.json");
+
+let configuredConnectionName = configuredFromEnv;
+
+type VpnStatusResponse = {
+  available: boolean;
+  connected: boolean;
+  configured: boolean;
+  connectionExists: boolean;
+  connectionName: string | null;
+  needsSelection: boolean;
+  message?: string;
+};
+
+type AgentConfig = {
+  connectionName: string;
+};
+
+type ExecError = Error & {
+  stdout?: string;
+  stderr?: string;
+};
+
+function quotePowerShell(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+async function runPowerShell(command: string): Promise<string> {
+  const { stdout } = await execFileAsync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+    {
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  return String(stdout ?? "");
+}
+
+async function loadAgentConfig(): Promise<void> {
+  try {
+    const raw = await fs.readFile(configFilePath, "utf8");
+    const parsed = JSON.parse(raw) as Partial<AgentConfig>;
+    if (typeof parsed.connectionName === "string" && parsed.connectionName.trim()) {
+      configuredConnectionName = parsed.connectionName.trim();
+      return;
+    }
+  } catch {
+    // Usa fallback do .env se o arquivo não existir.
+  }
+  if (configuredFromEnv) {
+    await saveAgentConfig(configuredFromEnv);
+  }
+}
+
+async function saveAgentConfig(connectionName: string): Promise<void> {
+  const payload: AgentConfig = { connectionName };
+  configuredConnectionName = connectionName;
+  await fs.writeFile(configFilePath, JSON.stringify(payload, null, 2), "utf8");
+}
+
+async function listVpnConnections(): Promise<string[]> {
+  if (process.platform !== "win32") return [];
+  const output = await runPowerShell(
+    "$names = @(); " +
+      "try { $names += (Get-VpnConnection -AllUserConnection -ErrorAction Stop | Select-Object -ExpandProperty Name) } catch {}; " +
+      "try { $names += (Get-VpnConnection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) } catch {}; " +
+      "$names | Where-Object { $_ -and $_.Trim().Length -gt 0 } | Sort-Object -Unique | ForEach-Object { Write-Output $_ }",
+  );
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function getVpnStatus(): Promise<VpnStatusResponse> {
+  if (process.platform !== "win32") {
+    return {
+      available: false,
+      connected: false,
+      configured: false,
+      connectionExists: false,
+      connectionName: configuredConnectionName || null,
+      needsSelection: true,
+      message: "Agente VPN disponível apenas no Windows.",
+    };
+  }
+
+  if (!configuredConnectionName) {
+    return {
+      available: false,
+      connected: false,
+      configured: false,
+      connectionExists: false,
+      connectionName: null,
+      needsSelection: true,
+      message: "Selecione a VPN para configurar o agente.",
+    };
+  }
+
+  const name = quotePowerShell(configuredConnectionName);
+  const statusOutput = await runPowerShell(
+    `$vpn = Get-VpnConnection -Name ${name} -ErrorAction SilentlyContinue; if ($null -eq $vpn) { Write-Output 'NOT_FOUND' } else { Write-Output $vpn.ConnectionStatus }`,
+  );
+  const status = statusOutput.trim();
+
+  if (status === "NOT_FOUND") {
+    return {
+      available: false,
+      connected: false,
+      configured: true,
+      connectionExists: false,
+      connectionName: configuredConnectionName,
+      needsSelection: true,
+      message: "VPN configurada não foi encontrada. Selecione novamente.",
+    };
+  }
+
+  return {
+    available: true,
+    connected: status.toLowerCase() === "connected",
+    configured: true,
+    connectionExists: true,
+    connectionName: configuredConnectionName,
+    needsSelection: false,
+  };
+}
+
+async function setVpnEnabled(enabled: boolean): Promise<VpnStatusResponse> {
+  const current = await getVpnStatus();
+  if (!current.available) return current;
+
+  const escapedName = quotePowerShell(current.connectionName ?? "");
+  try {
+    if (enabled && !current.connected) {
+      await runPowerShell(`rasdial ${escapedName}`);
+    } else if (!enabled && current.connected) {
+      await runPowerShell(`rasdial ${escapedName} /disconnect`);
+    }
+  } catch (error) {
+    const executionError = error as ExecError;
+    const detail = `${executionError.stderr ?? executionError.stdout ?? executionError.message ?? ""}`.trim();
+    const refreshed = await getVpnStatus();
+    return {
+      ...refreshed,
+      message: detail || (enabled ? "Falha ao ligar a VPN pelo Windows." : "Falha ao desligar a VPN pelo Windows."),
+    };
+  }
+  return getVpnStatus();
+}
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("Origem não permitida."));
+    },
+  }),
+);
+app.use(express.json());
+
+app.use((req, res, next) => {
+  if (!apiToken) {
+    next();
+    return;
+  }
+  const incoming = req.header("x-agent-token")?.trim();
+  if (!incoming || incoming !== apiToken) {
+    res.status(401).json({ message: "Token do agente inválido." });
+    return;
+  }
+  next();
+});
+
+app.get("/v1/health", (_req, res) => {
+  res.json({ ok: true, service: "mcservicos-vpn-agent" });
+});
+
+app.get("/v1/vpn/status", async (_req, res) => {
+  const status = await getVpnStatus();
+  res.json(status);
+});
+
+app.get("/v1/vpn/connections", async (_req, res) => {
+  const connections = await listVpnConnections();
+  res.json({
+    available: process.platform === "win32",
+    selectedConnectionName: configuredConnectionName || null,
+    connections,
+    message:
+      process.platform === "win32"
+        ? undefined
+        : "Agente VPN disponível apenas no Windows.",
+  });
+});
+
+app.post("/v1/vpn/config", async (req, res) => {
+  const rawName = String(req.body?.connectionName ?? "").trim();
+  if (!rawName) {
+    res.status(400).json({ message: "Nome da conexão VPN é obrigatório." });
+    return;
+  }
+  const connections = await listVpnConnections();
+  const exists = connections.some((name) => name.toLowerCase() === rawName.toLowerCase());
+  if (!exists) {
+    res.status(400).json({
+      message: "VPN informada não foi encontrada neste computador.",
+      availableConnections: connections,
+    });
+    return;
+  }
+  const canonicalName = connections.find((name) => name.toLowerCase() === rawName.toLowerCase()) ?? rawName;
+  await saveAgentConfig(canonicalName);
+  const status = await getVpnStatus();
+  res.json(status);
+});
+
+app.post("/v1/vpn/toggle", async (req, res) => {
+  const enabled = Boolean(req.body?.enabled);
+  const status = await setVpnEnabled(enabled);
+  res.json(status);
+});
+
+void (async () => {
+  await loadAgentConfig();
+  app.listen(port, "127.0.0.1", () => {
+    // eslint-disable-next-line no-console
+    console.log(`VPN Agent local ativo em http://127.0.0.1:${port}`);
+  });
+})();

@@ -7,26 +7,36 @@ export type ExtraField = {
   value: string;
 };
 
+export type CredentialAccessMode = "web" | "vpn";
+
 export type CredentialResponse = {
   id: number;
   systemName: string;
+  accessMode: CredentialAccessMode;
   linkUrl: string;
   username: string;
   password: string;
   updatedAt: string;
+  updatedByName: string;
   groupIds: number[];
   extraFields: ExtraField[];
 };
+
+function normalizeAccessModeInput(value: string): CredentialAccessMode {
+  return value === "vpn" ? "vpn" : "web";
+}
 
 function normalizeCredentialRow(
   row: {
     id: number;
     system_name: string;
+    access_mode: string | null;
     link_url: string;
     username: string;
     password_encrypted: string;
     extra_fields: unknown;
     updated_at: string;
+    updated_by_name: string | null;
     group_ids: number[] | null;
   },
 ): CredentialResponse {
@@ -47,10 +57,12 @@ function normalizeCredentialRow(
   return {
     id: row.id,
     systemName: row.system_name,
+    accessMode: row.access_mode === "vpn" ? "vpn" : "web",
     linkUrl: row.link_url ?? "",
     username: row.username,
     password: decryptCredentialValue(row.password_encrypted),
     updatedAt: row.updated_at,
+    updatedByName: row.updated_by_name?.trim() || "Sistema",
     groupIds: row.group_ids ?? [],
     extraFields,
   };
@@ -77,12 +89,14 @@ export async function listCredentialsForUser(
   }
 
   const result = await pool.query(
-    `SELECT c.id, c.system_name, c.link_url, c.username, c.password_encrypted, c.extra_fields, c.updated_at,
+    `SELECT c.id, c.system_name, c.access_mode, c.link_url, c.username, c.password_encrypted, c.extra_fields, c.updated_at,
+            u.name AS updated_by_name,
             ARRAY_REMOVE(ARRAY_AGG(DISTINCT cg.group_id), NULL) AS group_ids
      FROM credentials c
+     LEFT JOIN users u ON u.id = c.updated_by
      LEFT JOIN credential_groups cg ON cg.credential_id = c.id
      ${whereClause}
-     GROUP BY c.id
+     GROUP BY c.id, u.name
      ORDER BY c.system_name ASC`,
     params,
   );
@@ -92,6 +106,7 @@ export async function listCredentialsForUser(
 
 export async function createCredential(input: {
   systemName: string;
+  accessMode: CredentialAccessMode | "online";
   linkUrl: string;
   username: string;
   password: string;
@@ -100,11 +115,13 @@ export async function createCredential(input: {
   actorUserId: number;
 }): Promise<CredentialResponse> {
   const created = await pool.query(
-    `INSERT INTO credentials (system_name, link_url, username, password_encrypted, extra_fields, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, system_name, link_url, username, password_encrypted, extra_fields, updated_at`,
+    `INSERT INTO credentials (system_name, access_mode, link_url, username, password_encrypted, extra_fields, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, system_name, access_mode, link_url, username, password_encrypted, extra_fields, updated_at,
+      (SELECT name FROM users WHERE id = updated_by) AS updated_by_name`,
     [
       input.systemName,
+      normalizeAccessModeInput(input.accessMode),
       input.linkUrl,
       input.username,
       encryptSecret(input.password),
@@ -116,11 +133,13 @@ export async function createCredential(input: {
   const cred = created.rows[0] as {
     id: number;
     system_name: string;
+    access_mode: string | null;
     link_url: string;
     username: string;
     password_encrypted: string;
     extra_fields: unknown;
     updated_at: string;
+    updated_by_name: string | null;
   };
 
   if (input.groupIds.length > 0) {
@@ -140,6 +159,7 @@ export async function createCredential(input: {
 export async function updateCredential(input: {
   id: number;
   systemName: string;
+  accessMode: CredentialAccessMode | "online";
   linkUrl: string;
   username: string;
   password: string;
@@ -150,16 +170,19 @@ export async function updateCredential(input: {
   const updated = await pool.query(
     `UPDATE credentials
      SET system_name = $1,
-         link_url = $2,
-         username = $3,
-         password_encrypted = $4,
-         extra_fields = $5,
-         updated_by = $6,
+         access_mode = $2,
+         link_url = $3,
+         username = $4,
+         password_encrypted = $5,
+         extra_fields = $6,
+         updated_by = $7,
          updated_at = NOW()
-     WHERE id = $7
-     RETURNING id, system_name, link_url, username, password_encrypted, extra_fields, updated_at`,
+     WHERE id = $8
+     RETURNING id, system_name, access_mode, link_url, username, password_encrypted, extra_fields, updated_at,
+      (SELECT name FROM users WHERE id = updated_by) AS updated_by_name`,
     [
       input.systemName,
+      normalizeAccessModeInput(input.accessMode),
       input.linkUrl,
       input.username,
       encryptSecret(input.password),
@@ -185,11 +208,13 @@ export async function updateCredential(input: {
   const cred = updated.rows[0] as {
     id: number;
     system_name: string;
+    access_mode: string | null;
     link_url: string;
     username: string;
     password_encrypted: string;
     extra_fields: unknown;
     updated_at: string;
+    updated_by_name: string | null;
   };
 
   return {

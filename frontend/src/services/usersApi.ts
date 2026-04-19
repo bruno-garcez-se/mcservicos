@@ -13,6 +13,11 @@ export async function createUser(payload: {
   role: "admin" | "employee";
   active: boolean;
   groupIds: number[];
+  menuVisibility: {
+    senhas: boolean;
+    transacional: boolean;
+    negocial: boolean;
+  };
 }): Promise<ManagedUser> {
   const { data } = await http.post<ManagedUser>("/users", payload);
   return data;
@@ -27,6 +32,11 @@ export async function updateUser(
     role: "admin" | "employee";
     active: boolean;
     groupIds: number[];
+    menuVisibility: {
+      senhas: boolean;
+      transacional: boolean;
+      negocial: boolean;
+    };
   },
 ): Promise<ManagedUser> {
   const { data } = await http.put<ManagedUser>(`/users/${id}`, payload);

@@ -5,3 +5,7 @@ backend/.env
 frontend/.env
 backend/dist
 frontend/dist
+vpn-agent/dist
+vpn-agent/installer/payload
+vpn-agent/installer/output
+vpn-agent/agent.log

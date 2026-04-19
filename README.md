@@ -28,3 +28,16 @@ Sistema interno com aba `Senhas`, controle por grupos/departamentos e atualizaca
 ## Fluxo de tempo real
 
 Quando um admin cria/edita/exclui uma senha, o backend emite eventos para os grupos vinculados e os clientes com a aba aberta recebem a atualizacao sem recarregar a pagina.
+
+## Migrar banco local para online
+
+1. No arquivo `backend/.env`:
+   - `DATABASE_URL` deve apontar para o banco local (origem).
+   - `TARGET_DATABASE_URL` deve apontar para o banco online (destino, URL externa).
+2. Rode a migracao com um comando:
+   - `npm run db:migrate:online -w backend`
+3. Ao final, o script mostra a quantidade de registros copiados.
+
+Observacoes:
+- Essa migracao sobrescreve os dados existentes no banco online.
+- Use a URL externa do banco online para migrar a partir da sua maquina local.

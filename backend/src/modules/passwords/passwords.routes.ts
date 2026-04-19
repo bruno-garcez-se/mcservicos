@@ -10,9 +10,14 @@ import {
   listCredentialsForUser,
   updateCredential,
 } from "./passwords.service";
+import { ensureCredentialAccessModeColumn } from "./credentialAccessMode";
 
 const payloadSchema = z.object({
   systemName: z.string().default(""),
+  accessMode: z
+    .enum(["web", "vpn", "online"])
+    .default("web")
+    .transform((value) => (value === "online" ? "web" : value)),
   linkUrl: z.string().default(""),
   username: z.string().default(""),
   password: z.string().default(""),
@@ -33,13 +38,29 @@ const paramsSchema = z.object({
 
 const passwordsRouter = Router();
 
+async function canEditCredential(user: NonNullable<Express.Request["user"]>, credentialId: number): Promise<boolean> {
+  if (user.role === "admin") return true;
+  if (!user.groupIds.length) return false;
+  const accessResult = await pool.query(
+    `SELECT 1
+     FROM credential_groups
+     WHERE credential_id = $1
+       AND group_id = ANY($2::int[])
+     LIMIT 1`,
+    [credentialId, user.groupIds],
+  );
+  return (accessResult.rowCount ?? 0) > 0;
+}
+
 passwordsRouter.get("/", requireAuth, async (req, res) => {
+  await ensureCredentialAccessModeColumn();
   const user = req.user!;
   const list = await listCredentialsForUser(user);
   res.json(list);
 });
 
 passwordsRouter.post("/", requireAuth, requireRole("admin"), async (req, res) => {
+  await ensureCredentialAccessModeColumn();
   const user = req.user!;
   const payload = payloadSchema.parse(req.body);
 
@@ -56,6 +77,7 @@ passwordsRouter.post("/", requireAuth, requireRole("admin"), async (req, res) =>
     details: {
       systemName: created.systemName,
       linkUrl: created.linkUrl,
+        accessMode: created.accessMode,
       groupIds: created.groupIds,
       extraFieldNames: created.extraFields.map((item) => item.name),
     },
@@ -68,11 +90,16 @@ passwordsRouter.post("/", requireAuth, requireRole("admin"), async (req, res) =>
 passwordsRouter.put(
   "/:id",
   requireAuth,
-  requireRole("admin"),
   async (req, res) => {
+    await ensureCredentialAccessModeColumn();
     const user = req.user!;
     const params = paramsSchema.parse(req.params);
     const payload = payloadSchema.parse(req.body);
+    const allowedToEdit = await canEditCredential(user, params.id);
+    if (!allowedToEdit) {
+      res.status(403).json({ message: "Sem permissao para editar esta credencial." });
+      return;
+    }
     const previousGroupsResult = await pool.query(
       `SELECT group_id FROM credential_groups WHERE credential_id = $1`,
       [params.id],
@@ -97,6 +124,7 @@ passwordsRouter.put(
       details: {
         systemName: updated.systemName,
         linkUrl: updated.linkUrl,
+        accessMode: updated.accessMode,
         groupIds: updated.groupIds,
         extraFieldNames: updated.extraFields.map((item) => item.name),
       },
@@ -118,6 +146,7 @@ passwordsRouter.delete(
   requireAuth,
   requireRole("admin"),
   async (req, res) => {
+    await ensureCredentialAccessModeColumn();
     const user = req.user!;
     const params = paramsSchema.parse(req.params);
 

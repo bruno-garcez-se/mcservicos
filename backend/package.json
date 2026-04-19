@@ -7,7 +7,10 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "db:init": "tsx src/scripts/initDb.ts",
-    "db:seed": "tsx src/scripts/seed.ts"
+    "db:seed": "tsx src/scripts/seed.ts",
+    "db:migrate:local-to-remote": "tsx src/scripts/migrateLocalToRemote.ts",
+    "db:migrate:online": "tsx src/scripts/migrateLocalToRemote.ts --confirm",
+    "user:reset-password": "tsx src/scripts/resetUserPassword.ts"
   },
   "keywords": [],
   "author": "",

@@ -8,6 +8,7 @@ export async function listCredentials(): Promise<Credential[]> {
 
 export async function createCredential(payload: {
   systemName: string;
+  accessMode: "web" | "vpn";
   linkUrl: string;
   username: string;
   password: string;
@@ -22,6 +23,7 @@ export async function updateCredential(
   id: number,
   payload: {
     systemName: string;
+    accessMode: "web" | "vpn";
     linkUrl: string;
     username: string;
     password: string;

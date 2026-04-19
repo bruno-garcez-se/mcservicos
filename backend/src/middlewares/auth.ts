@@ -23,7 +23,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 
   try {
     const payload = verifyAccessToken(token);
-    req.user = { id: payload.sub, role: payload.role, groupIds: payload.groupIds };
+    req.user = {
+      id: payload.sub,
+      role: payload.role,
+      groupIds: payload.groupIds,
+      menuVisibility: payload.menuVisibility,
+    };
     next();
   } catch {
     res.status(401).json({ message: "Token invalido ou expirado." });
