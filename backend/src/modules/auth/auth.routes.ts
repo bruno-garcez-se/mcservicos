@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { Router } from "express";
+import { type CookieOptions, Router } from "express";
 import { z } from "zod";
 import { authRateLimit } from "../../middlewares/rateLimit";
 import { requireAuth } from "../../middlewares/auth";
@@ -22,6 +22,22 @@ const changePasswordSchema = z.object({
 });
 
 const authRouter = Router();
+const REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
+function isLocalhostOrigin(origin: string | undefined): boolean {
+  if (!origin) return false;
+  return /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin.trim());
+}
+
+function getRefreshCookieOptions(origin: string | undefined): CookieOptions {
+  const localOrigin = isLocalhostOrigin(origin);
+  return {
+    httpOnly: true,
+    sameSite: localOrigin ? "lax" : "none",
+    secure: !localOrigin,
+    maxAge: REFRESH_COOKIE_MAX_AGE,
+  };
+}
 
 authRouter.post("/login", authRateLimit, async (req, res) => {
   await ensureUserMenuVisibilityColumns();
@@ -82,12 +98,8 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
   const accessToken = signAccessToken(payload);
   const refreshToken = signRefreshToken(payload);
 
-  res.cookie("refreshToken", refreshToken, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: false,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+  const cookieOptions = getRefreshCookieOptions(req.headers.origin);
+  res.cookie("refreshToken", refreshToken, cookieOptions);
 
   await createAuditLog({
     actorUserId: user.id,
@@ -145,7 +157,12 @@ authRouter.post("/logout", async (req, res) => {
       // Ignora token invalido no logout.
     }
   }
-  res.clearCookie("refreshToken");
+  const cookieOptions = getRefreshCookieOptions(req.headers.origin);
+  res.clearCookie("refreshToken", {
+    httpOnly: cookieOptions.httpOnly,
+    sameSite: cookieOptions.sameSite,
+    secure: cookieOptions.secure,
+  });
   res.status(204).send();
 });
 
