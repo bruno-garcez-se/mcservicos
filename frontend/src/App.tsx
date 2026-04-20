@@ -26,6 +26,18 @@ const ContatosPage = lazy(() =>
 
 type Tab = "senhas" | "transacional" | "negocial" | "contatos" | "usuarios";
 const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
+const VPN_FEEDBACK_EVENT = "mc:vpn-feedback";
+
+type VpnStatusSyncEventDetail =
+  | { kind: "status"; status: AgentVpnStatus }
+  | { kind: "transition"; connected: boolean }
+  | AgentVpnStatus
+  | undefined;
+
+type VpnFeedbackEventDetail = {
+  tone: "info" | "error";
+  message: string;
+};
 
 function KeyIcon() {
   return (
@@ -123,6 +135,10 @@ export default function App() {
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
   const [vpnStatus, setVpnStatus] = useState<AgentVpnStatus | null>(null);
+  const [vpnConnectedOptimistic, setVpnConnectedOptimistic] = useState<{
+    connected: boolean;
+    expiresAt: number;
+  } | null>(null);
   const [vpnConnections, setVpnConnections] = useState<AgentVpnConnections | null>(null);
   const [selectedVpnName, setSelectedVpnName] = useState("");
   const [vpnBusy, setVpnBusy] = useState(false);
@@ -150,6 +166,27 @@ export default function App() {
     const status = await getAgentVpnStatus();
     setVpnStatus(status);
   }, []);
+
+  useEffect(() => {
+    if (!vpnConnectedOptimistic) return;
+    if (vpnStatus?.connected === vpnConnectedOptimistic.connected) {
+      setVpnConnectedOptimistic(null);
+      return;
+    }
+    const remainingMs = vpnConnectedOptimistic.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      setVpnConnectedOptimistic(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setVpnConnectedOptimistic((current) => {
+        if (!current) return null;
+        if (Date.now() >= current.expiresAt) return null;
+        return current;
+      });
+    }, remainingMs);
+    return () => window.clearTimeout(timer);
+  }, [vpnStatus, vpnConnectedOptimistic]);
 
   const loadVpnConnections = useCallback(async () => {
     const data = await listAgentVpnConnections();
@@ -224,18 +261,47 @@ export default function App() {
 
   useEffect(() => {
     const onExternalVpnStatusSync = (event: Event) => {
-      const customEvent = event as CustomEvent<AgentVpnStatus | undefined>;
-      const nextStatus = customEvent.detail;
-      if (nextStatus) {
-        setVpnStatus(nextStatus);
+      const customEvent = event as CustomEvent<VpnStatusSyncEventDetail>;
+      const detail = customEvent.detail;
+      if (!detail) {
+        void loadVpnStatus();
         return;
       }
-      void loadVpnStatus();
+      if (typeof detail === "object" && "kind" in detail) {
+        if (detail.kind === "transition") {
+          setVpnConnectedOptimistic({
+            connected: detail.connected,
+            expiresAt: Date.now() + 6500,
+          });
+          return;
+        }
+        if (detail.kind === "status") {
+          setVpnStatus(detail.status);
+          return;
+        }
+      }
+      if (typeof detail === "object") {
+        setVpnStatus(detail as AgentVpnStatus);
+        return;
+      }
     };
 
     window.addEventListener(VPN_STATUS_SYNC_EVENT, onExternalVpnStatusSync as EventListener);
     return () => window.removeEventListener(VPN_STATUS_SYNC_EVENT, onExternalVpnStatusSync as EventListener);
   }, [loadVpnStatus]);
+
+  useEffect(() => {
+    const onExternalVpnFeedback = (event: Event) => {
+      const customEvent = event as CustomEvent<VpnFeedbackEventDetail | undefined>;
+      const detail = customEvent.detail;
+      if (!detail?.message?.trim()) return;
+      setVpnFeedbackTone(detail.tone === "error" ? "error" : "info");
+      setVpnFeedbackAction(null);
+      setVpnFeedbackMessage(detail.message);
+    };
+    window.addEventListener(VPN_FEEDBACK_EVENT, onExternalVpnFeedback as EventListener);
+    return () => window.removeEventListener(VPN_FEEDBACK_EVENT, onExternalVpnFeedback as EventListener);
+  }, []);
 
   const openPasswordModal = () => {
     setCurrentPassword("");
@@ -273,16 +339,22 @@ export default function App() {
   const passwordMessageLabel =
     passwordMessageTone === "success" ? "Sucesso" : passwordMessageTone === "error" ? "Erro" : "Aviso";
 
-  const vpnConnected = Boolean(vpnStatus?.connected);
+  const vpnConnected = vpnConnectedOptimistic?.connected ?? Boolean(vpnStatus?.connected);
+  const vpnTransitionInProgress = Boolean(
+    vpnConnectedOptimistic && vpnStatus?.connected !== vpnConnectedOptimistic.connected,
+  );
   const vpnAgentReachable = Boolean(vpnStatus?.agentReachable);
   const vpnNeedsSelection = Boolean(vpnStatus?.needsSelection);
   const vpnCanToggle = Boolean(vpnStatus?.available && !vpnNeedsSelection);
   const vpnLooksWithoutAgent =
     !vpnAgentReachable ||
     (!vpnStatus?.available && !vpnStatus?.configured && !vpnStatus?.connectionExists && !vpnConnected);
-  const vpnTooltip =
-    vpnStatus?.message ??
-    (vpnLooksWithoutAgent
+  const vpnTooltip = vpnTransitionInProgress
+    ? vpnConnected
+      ? "Ligando VPN..."
+      : "Desligando VPN..."
+    : vpnStatus?.message ??
+      (vpnLooksWithoutAgent
       ? "Agente VPN não instalado. Clique para instalar."
       : vpnNeedsSelection
         ? "Selecione a VPN deste computador para habilitar o controle."
@@ -291,6 +363,7 @@ export default function App() {
         ? "VPN ligada"
         : "VPN desligada"
       : "Controle de VPN indisponível neste ambiente.");
+  const vpnInlineStatusLabel = vpnTransitionInProgress ? (vpnConnected ? "ligando..." : "desligando...") : "";
 
   const openInstallAgentFlow = () => {
     setVpnFeedbackTone("info");
@@ -366,6 +439,10 @@ export default function App() {
       setIsVpnInstallModalOpen(true);
       return;
     }
+    setVpnConnectedOptimistic({
+      connected: shouldEnable,
+      expiresAt: Date.now() + 6500,
+    });
     setVpnBusy(true);
     try {
       const next = await setAgentVpnEnabled(shouldEnable);
@@ -604,6 +681,12 @@ export default function App() {
             >
               <span className="vpn-switch-knob" />
             </button>
+            <span
+              className={`vpn-inline-status ${vpnConnected ? "is-on" : "is-off"} ${vpnInlineStatusLabel ? "is-visible" : ""}`}
+              aria-live="polite"
+            >
+              {vpnInlineStatusLabel || "ligando..."}
+            </span>
           </div>
           <div className="user-actions" ref={menuRef}>
           <button

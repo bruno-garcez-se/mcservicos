@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { execFile, spawn } from "child_process";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
@@ -73,6 +73,15 @@ async function runRasdial(args: string[]): Promise<string> {
   return `${String(stdout ?? "")}\n${String(stderr ?? "")}`.trim();
 }
 
+function launchDetached(filePath: string, args: string[] = []): void {
+  const child = spawn(filePath, args, {
+    detached: true,
+    windowsHide: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
 function buildRasdialArgs(connectionName: string, extra: string[] = []): string[] {
   const args = [connectionName, ...extra];
   if (userPhonebookPath) {
@@ -83,6 +92,10 @@ function buildRasdialArgs(connectionName: string, extra: string[] = []): string[
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function triggerRasdialDisconnect(connectionName: string): Promise<void> {
+  launchDetached("rasdial.exe", buildRasdialArgs(connectionName, ["/disconnect"]));
 }
 
 async function waitForVpnConnectedState(
@@ -96,7 +109,7 @@ async function waitForVpnConnectedState(
     if (connected === expectedConnected) {
       return true;
     }
-    await sleep(1200);
+    await sleep(200);
   }
   return false;
 }
@@ -118,18 +131,23 @@ async function isVpnConnectedByName(connectionName: string): Promise<boolean> {
 
 async function tryConnectViaRasphone(connectionName: string): Promise<boolean> {
   const escaped = connectionName.replace(/"/g, '""');
+  try {
+    await runPowerShell(
+      "Get-Process -Name 'rasphone' -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }",
+    );
+  } catch {
+    // Continua mesmo que não exista processo antigo para encerrar.
+  }
+  await runPowerShell(
+    `Start-Process -FilePath 'rasphone.exe' -ArgumentList '-d "${escaped}"' -WindowStyle Minimized`,
+  );
+  if (await waitForVpnConnectedState(connectionName, true, 4500)) {
+    return true;
+  }
   await runPowerShell(
     `Start-Process -FilePath 'rasphone.exe' -ArgumentList '-d "${escaped}"'`,
   );
-
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < 25000) {
-    if (await isVpnConnectedByName(connectionName)) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-  }
-  return false;
+  return waitForVpnConnectedState(connectionName, true, 14000);
 }
 
 async function loadAgentConfig(): Promise<void> {
@@ -270,12 +288,16 @@ async function getVpnStatus(): Promise<VpnStatusResponse> {
 }
 
 async function setVpnEnabled(enabled: boolean): Promise<VpnStatusResponse> {
-  const current = await getVpnStatus();
-  if (!current.available) return current;
+  if (process.platform !== "win32") {
+    return getVpnStatus();
+  }
+  const connectionName = configuredConnectionName.trim();
+  if (!connectionName) {
+    return getVpnStatus();
+  }
 
-  const connectionName = current.connectionName ?? "";
   try {
-    if (enabled && !current.connected) {
+    if (enabled) {
       if (!configuredUsername || !configuredPassword) {
         const connectedViaRasphone = await tryConnectViaRasphone(connectionName);
         if (connectedViaRasphone) {
@@ -297,27 +319,30 @@ async function setVpnEnabled(enabled: boolean): Promise<VpnStatusResponse> {
         }
       }
       await runRasdial(buildRasdialArgs(connectionName, credentialArgs));
-    } else if (!enabled && current.connected) {
+    } else {
       try {
-        await runRasdial(buildRasdialArgs(connectionName, ["/disconnect"]));
+        await triggerRasdialDisconnect(connectionName);
       } catch {
         // Ignora e tenta validação por status logo abaixo.
       }
 
-      if (!(await waitForVpnConnectedState(connectionName, false, 8000))) {
+      if (!(await waitForVpnConnectedState(connectionName, false, 700))) {
         try {
-          await runRasdial(["/disconnect"]);
+          launchDetached("rasdial.exe", ["/disconnect"]);
         } catch {
           // Segunda tentativa também pode falhar quando já não há sessão ativa.
         }
       }
 
-      if (!(await waitForVpnConnectedState(connectionName, false, 8000))) {
+      if (!(await waitForVpnConnectedState(connectionName, false, 700))) {
         const refreshed = await getVpnStatus();
+        if (!refreshed.connected) {
+          return refreshed;
+        }
         return {
           ...refreshed,
           message:
-            "A VPN ainda aparece como conectada no Windows. Tente novamente em alguns segundos ou desconecte manualmente.",
+            "Comando de desligar enviado, mas o Windows ainda está finalizando a desconexão. Tente novamente em instantes.",
         };
       }
     }

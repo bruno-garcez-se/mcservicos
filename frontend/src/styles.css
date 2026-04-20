@@ -231,6 +231,34 @@ button {
   transform: translateX(14px);
 }
 
+.vpn-inline-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+  min-width: 62px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12px;
+  text-transform: lowercase;
+  opacity: 0;
+  visibility: hidden;
+  user-select: none;
+  transition: opacity 0.14s ease;
+}
+
+.vpn-inline-status.is-visible {
+  opacity: 0.78;
+  visibility: visible;
+}
+
+.vpn-inline-status.is-on {
+  color: rgba(232, 239, 247, 0.68);
+}
+
+.vpn-inline-status.is-off {
+  color: rgba(232, 239, 247, 0.68);
+}
+
 .user-menu-trigger {
   background: transparent;
   border-color: rgba(255, 255, 255, 0.22);

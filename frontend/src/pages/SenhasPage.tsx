@@ -41,6 +41,10 @@ const emptyForm: FormState = {
 
 const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
 
+type VpnStatusSyncEventDetail =
+  | { kind: "status"; status: AgentVpnStatus }
+  | { kind: "transition"; connected: boolean };
+
 function ClipboardIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -320,7 +324,7 @@ export function SenhasPage() {
   const onCopyRow = (
     value: string,
     rowKey: string,
-    credentialContext?: { linkUrl: string; accessMode: "web" | "vpn" },
+    credentialContext?: { credentialId: number | string; linkUrl: string },
   ) => {
     if (!value.trim()) {
       setCopyInfo("Nada para copiar.");
@@ -330,8 +334,7 @@ export function SenhasPage() {
     void onCopy(value).then((ok) => {
       if (!ok) return;
       if (credentialContext?.linkUrl?.trim()) {
-        navigateCredentialLinkIfAlreadyOpen(credentialContext.linkUrl);
-        void syncVpnByAccessMode(credentialContext.accessMode).catch(() => undefined);
+        navigateCredentialLinkIfAlreadyOpen(credentialContext.linkUrl, credentialContext.credentialId);
       }
       setCopiedRowKey(rowKey);
       window.setTimeout(() => {
@@ -358,13 +361,19 @@ export function SenhasPage() {
       return "credential_link_default";
     }
   };
+  const getCredentialWindowKey = (credentialId: number | string): string => `credential_link_id_${String(credentialId)}`;
   const pushVpnInfo = (text: string) => {
     if (!text.trim()) return;
     setVpnInfo(text);
     window.setTimeout(() => setVpnInfo(""), 2200);
   };
   const emitVpnStatusSync = (status: AgentVpnStatus) => {
-    window.dispatchEvent(new CustomEvent<AgentVpnStatus>(VPN_STATUS_SYNC_EVENT, { detail: status }));
+    const detail: VpnStatusSyncEventDetail = { kind: "status", status };
+    window.dispatchEvent(new CustomEvent<VpnStatusSyncEventDetail>(VPN_STATUS_SYNC_EVENT, { detail }));
+  };
+  const emitVpnTransitionSync = (connected: boolean) => {
+    const detail: VpnStatusSyncEventDetail = { kind: "transition", connected };
+    window.dispatchEvent(new CustomEvent<VpnStatusSyncEventDetail>(VPN_STATUS_SYNC_EVENT, { detail }));
   };
   const syncVpnByAccessMode = async (accessMode: "web" | "vpn") => {
     const shouldEnableVpn = accessMode === "vpn";
@@ -385,6 +394,7 @@ export function SenhasPage() {
       return;
     }
 
+    emitVpnTransitionSync(shouldEnableVpn);
     const updatedStatus = await setAgentVpnEnabled(shouldEnableVpn);
     emitVpnStatusSync(updatedStatus);
     if (updatedStatus.connected === shouldEnableVpn) {
@@ -396,30 +406,57 @@ export function SenhasPage() {
         (shouldEnableVpn ? "Não foi possível ligar a VPN automaticamente." : "Não foi possível desligar a VPN automaticamente."),
     );
   };
-  const openCredentialLinkWithAccessMode = async (rawUrl: string, accessMode: "web" | "vpn") => {
-    await syncVpnByAccessMode(accessMode);
+  const openCredentialLinkWithAccessMode = (
+    rawUrl: string,
+    accessMode: "web" | "vpn",
+    credentialId?: number | string,
+  ) => {
     const navigableUrl = getNavigableUrl(rawUrl);
     if (!navigableUrl) return;
-    const target = getCredentialLinkTarget(navigableUrl);
+    const movedToExistingTab = navigateCredentialLinkIfAlreadyOpen(rawUrl, credentialId);
+    if (movedToExistingTab) {
+      void syncVpnByAccessMode(accessMode).catch(() => undefined);
+      return;
+    }
+    const targetByCredential =
+      credentialId !== undefined && credentialId !== null ? getCredentialWindowKey(credentialId) : "";
+    const targetByUrl = getCredentialLinkTarget(navigableUrl);
+    const target = targetByCredential || targetByUrl;
     const openedWindow = window.open(navigableUrl, target);
     if (openedWindow) {
-      credentialLinkWindowsRef.current[target] = openedWindow;
+      if (credentialId !== undefined && credentialId !== null) {
+        credentialLinkWindowsRef.current[getCredentialWindowKey(credentialId)] = openedWindow;
+      }
+      credentialLinkWindowsRef.current[targetByUrl] = openedWindow;
     }
+    void syncVpnByAccessMode(accessMode).catch(() => undefined);
   };
-  const navigateCredentialLinkIfAlreadyOpen = (rawUrl: string): boolean => {
+  const navigateCredentialLinkIfAlreadyOpen = (rawUrl: string, credentialId?: number | string): boolean => {
     const navigableUrl = getNavigableUrl(rawUrl);
     if (!navigableUrl) return false;
+    const keyByCredential =
+      credentialId !== undefined && credentialId !== null ? getCredentialWindowKey(credentialId) : "";
     const target = getCredentialLinkTarget(navigableUrl);
-    const existingWindow = credentialLinkWindowsRef.current[target];
-    if (!existingWindow || existingWindow.closed) {
-      return false;
+    const windowsToTry = [
+      keyByCredential ? credentialLinkWindowsRef.current[keyByCredential] : null,
+      credentialLinkWindowsRef.current[target],
+    ];
+
+    for (const candidate of windowsToTry) {
+      if (!candidate) continue;
+      try {
+        candidate.focus();
+        return true;
+      } catch {
+        // Alguns domínios podem invalidar a referência (COOP). Tenta próxima opção.
+      }
     }
-    try {
-      existingWindow.focus();
-      return true;
-    } catch {
-      return false;
+
+    if (keyByCredential) {
+      credentialLinkWindowsRef.current[keyByCredential] = null;
     }
+    credentialLinkWindowsRef.current[target] = null;
+    return false;
   };
   const getCredentialFieldMaskedValue = (field: ExtraField): string => {
     if (normalizeFieldName(field.name) === "senha") {
@@ -542,11 +579,11 @@ export function SenhasPage() {
                         role="button"
                         tabIndex={0}
                         title="Abrir link em nova aba"
-                        onClick={() => void openCredentialLinkWithAccessMode(cred.linkUrl, accessMode)}
+                        onClick={() => void openCredentialLinkWithAccessMode(cred.linkUrl, accessMode, cred.id)}
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            void openCredentialLinkWithAccessMode(cred.linkUrl, accessMode);
+                            void openCredentialLinkWithAccessMode(cred.linkUrl, accessMode, cred.id);
                           }
                         }}
                       >
@@ -557,7 +594,7 @@ export function SenhasPage() {
                           title="Abrir link em nova aba"
                           onClick={(event) => {
                             event.stopPropagation();
-                            void openCredentialLinkWithAccessMode(cred.linkUrl, accessMode);
+                            void openCredentialLinkWithAccessMode(cred.linkUrl, accessMode, cred.id);
                           }}
                         >
                           {cred.linkUrl}
@@ -583,12 +620,12 @@ export function SenhasPage() {
                         tabIndex={0}
                         title={copied ? "Copiado!" : "Clique para copiar"}
                         onClick={() =>
-                          onCopyRow(copyValue, rowKey, { linkUrl: cred.linkUrl, accessMode })
+                          onCopyRow(copyValue, rowKey, { credentialId: cred.id, linkUrl: cred.linkUrl })
                         }
                         onKeyDown={(event) => {
                           if (event.key === "Enter" || event.key === " ") {
                             event.preventDefault();
-                            onCopyRow(copyValue, rowKey, { linkUrl: cred.linkUrl, accessMode });
+                            onCopyRow(copyValue, rowKey, { credentialId: cred.id, linkUrl: cred.linkUrl });
                           }
                         }}
                       >
