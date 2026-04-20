@@ -13,6 +13,9 @@ const app = express();
 
 const port = Number(process.env.PORT || 48321);
 const configuredFromEnv = (process.env.VPN_CONNECTION_NAME || "").trim();
+const configuredUsername = (process.env.VPN_USERNAME || "").trim();
+const configuredPassword = (process.env.VPN_PASSWORD || "").trim();
+const configuredDomain = (process.env.VPN_DOMAIN || "").trim();
 const apiToken = (process.env.AGENT_API_TOKEN || "").trim();
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
   .split(",")
@@ -23,6 +26,9 @@ const configFilePath = process.env.AGENT_CONFIG_PATH?.trim()
   : path.resolve(process.cwd(), "agent-config.json");
 
 let configuredConnectionName = configuredFromEnv;
+const userPhonebookPath = process.platform === "win32" && process.env.APPDATA
+  ? path.join(process.env.APPDATA, "Microsoft", "Network", "Connections", "Pbk", "rasphone.pbk")
+  : "";
 
 type VpnStatusResponse = {
   available: boolean;
@@ -57,6 +63,53 @@ async function runPowerShell(command: string): Promise<string> {
     },
   );
   return String(stdout ?? "");
+}
+
+async function runRasdial(args: string[]): Promise<string> {
+  const { stdout, stderr } = await execFileAsync("rasdial.exe", args, {
+    windowsHide: true,
+    maxBuffer: 1024 * 1024,
+  });
+  return `${String(stdout ?? "")}\n${String(stderr ?? "")}`.trim();
+}
+
+function buildRasdialArgs(connectionName: string, extra: string[] = []): string[] {
+  const args = [connectionName, ...extra];
+  if (userPhonebookPath) {
+    args.push(`/PHONEBOOK:${userPhonebookPath}`);
+  }
+  return args;
+}
+
+async function isVpnConnectedByName(connectionName: string): Promise<boolean> {
+  const escapedName = quotePowerShell(connectionName);
+  const statusOutput = await runPowerShell(
+    `$vpn = Get-VpnConnection -Name ${escapedName} -ErrorAction SilentlyContinue; if ($null -eq $vpn) { Write-Output 'NOT_FOUND' } else { Write-Output $vpn.ConnectionStatus }`,
+  );
+  const status = statusOutput.trim().toLowerCase();
+  if (status === "connected") return true;
+  if (status === "disconnected") return false;
+  if (status === "not_found") {
+    const rasdialOutput = await runPowerShell("rasdial");
+    return rasdialOutput.toLowerCase().includes(connectionName.toLowerCase());
+  }
+  return false;
+}
+
+async function tryConnectViaRasphone(connectionName: string): Promise<boolean> {
+  const escaped = connectionName.replace(/"/g, '""');
+  await runPowerShell(
+    `Start-Process -FilePath 'rasphone.exe' -ArgumentList '-d "${escaped}"'`,
+  );
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 25000) {
+    if (await isVpnConnectedByName(connectionName)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+  }
+  return false;
 }
 
 async function loadAgentConfig(): Promise<void> {
@@ -200,20 +253,44 @@ async function setVpnEnabled(enabled: boolean): Promise<VpnStatusResponse> {
   const current = await getVpnStatus();
   if (!current.available) return current;
 
-  const escapedName = quotePowerShell(current.connectionName ?? "");
+  const connectionName = current.connectionName ?? "";
   try {
     if (enabled && !current.connected) {
-      await runPowerShell(`rasdial ${escapedName}`);
+      if (!configuredUsername || !configuredPassword) {
+        const connectedViaRasphone = await tryConnectViaRasphone(connectionName);
+        if (connectedViaRasphone) {
+          return getVpnStatus();
+        }
+        const refreshed = await getVpnStatus();
+        return {
+          ...refreshed,
+          message:
+            "Não foi possível conectar automaticamente pelo clique do Windows. Verifique se o perfil VPN conecta sem prompt no botão Conectar do sistema.",
+        };
+      }
+
+      const credentialArgs: string[] = [];
+      if (configuredUsername && configuredPassword) {
+        credentialArgs.push(configuredUsername, configuredPassword);
+        if (configuredDomain) {
+          credentialArgs.push(`/DOMAIN:${configuredDomain}`);
+        }
+      }
+      await runRasdial(buildRasdialArgs(connectionName, credentialArgs));
     } else if (!enabled && current.connected) {
-      await runPowerShell(`rasdial ${escapedName} /disconnect`);
+      await runRasdial(buildRasdialArgs(connectionName, ["/disconnect"]));
     }
   } catch (error) {
     const executionError = error as ExecError;
-    const detail = `${executionError.stderr ?? executionError.stdout ?? executionError.message ?? ""}`.trim();
+    const detail = `${executionError.stdout ?? ""}\n${executionError.stderr ?? ""}\n${executionError.message ?? ""}`.trim();
     const refreshed = await getVpnStatus();
     return {
       ...refreshed,
-      message: detail || (enabled ? "Falha ao ligar a VPN pelo Windows." : "Falha ao desligar a VPN pelo Windows."),
+      message:
+        detail ||
+        (enabled
+          ? "Falha ao ligar a VPN pelo Windows. Verifique se usuário/senha da VPN estão salvos."
+          : "Falha ao desligar a VPN pelo Windows."),
     };
   }
   return getVpnStatus();

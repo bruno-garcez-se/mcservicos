@@ -32,7 +32,7 @@ Name: "{userdesktop}\MC Servicos VPN Agent"; Filename: "{app}\{#AppExeName}"; Ta
 Name: "desktopicon"; Description: "Criar atalho na area de trabalho"; GroupDescription: "Atalhos adicionais:"
 
 [Run]
-Filename: "{app}\{#AppExeName}"; Description: "Iniciar agente local agora"; Flags: postinstall nowait skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\{#AppExeName}"""; Description: "Iniciar agente local agora"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
 Type: files; Name: "{app}\agent.log"
