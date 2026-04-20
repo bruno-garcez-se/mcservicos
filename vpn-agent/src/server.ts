@@ -81,6 +81,26 @@ function buildRasdialArgs(connectionName: string, extra: string[] = []): string[
   return args;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForVpnConnectedState(
+  connectionName: string,
+  expectedConnected: boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const connected = await isVpnConnectedByName(connectionName);
+    if (connected === expectedConnected) {
+      return true;
+    }
+    await sleep(1200);
+  }
+  return false;
+}
+
 async function isVpnConnectedByName(connectionName: string): Promise<boolean> {
   const escapedName = quotePowerShell(connectionName);
   const statusOutput = await runPowerShell(
@@ -278,7 +298,28 @@ async function setVpnEnabled(enabled: boolean): Promise<VpnStatusResponse> {
       }
       await runRasdial(buildRasdialArgs(connectionName, credentialArgs));
     } else if (!enabled && current.connected) {
-      await runRasdial(buildRasdialArgs(connectionName, ["/disconnect"]));
+      try {
+        await runRasdial(buildRasdialArgs(connectionName, ["/disconnect"]));
+      } catch {
+        // Ignora e tenta validação por status logo abaixo.
+      }
+
+      if (!(await waitForVpnConnectedState(connectionName, false, 8000))) {
+        try {
+          await runRasdial(["/disconnect"]);
+        } catch {
+          // Segunda tentativa também pode falhar quando já não há sessão ativa.
+        }
+      }
+
+      if (!(await waitForVpnConnectedState(connectionName, false, 8000))) {
+        const refreshed = await getVpnStatus();
+        return {
+          ...refreshed,
+          message:
+            "A VPN ainda aparece como conectada no Windows. Tente novamente em alguns segundos ou desconecte manualmente.",
+        };
+      }
     }
   } catch (error) {
     const executionError = error as ExecError;

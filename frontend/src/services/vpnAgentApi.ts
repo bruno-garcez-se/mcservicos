@@ -29,10 +29,16 @@ export type AgentVpnConnections = {
 const AGENT_BASE_URL = import.meta.env.VITE_VPN_AGENT_URL ?? "http://127.0.0.1:48321";
 export const VPN_AGENT_INSTALLER_URL =
   import.meta.env.VITE_VPN_AGENT_INSTALLER_URL ?? "/downloads/mcservicos-vpn-agent-installer.exe";
+const AGENT_DISCOVERY_TIMEOUT_MS = 1200;
+const AGENT_REQUEST_TIMEOUT_MS = 6000;
+const AGENT_TOGGLE_TIMEOUT_MS = 12000;
+const AGENT_HEALTH_CACHE_TTL_MS = 4000;
 
-async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+let cachedHealth: { ok: boolean; checkedAt: number } | null = null;
+
+async function fetchWithTimeout(url: string, init?: RequestInit, timeoutMs = AGENT_REQUEST_TIMEOUT_MS): Promise<Response> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 1500);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       ...init,
@@ -47,9 +53,40 @@ async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Respon
   }
 }
 
-export async function getAgentVpnStatus(): Promise<AgentVpnStatus> {
+async function checkAgentHealth(force = false): Promise<boolean> {
+  const now = Date.now();
+  if (!force && cachedHealth && now - cachedHealth.checkedAt < AGENT_HEALTH_CACHE_TTL_MS) {
+    return cachedHealth.ok;
+  }
+
   try {
-    const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/vpn/status`);
+    const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/health`, undefined, AGENT_DISCOVERY_TIMEOUT_MS);
+    const ok = response.ok;
+    cachedHealth = { ok, checkedAt: Date.now() };
+    return ok;
+  } catch {
+    cachedHealth = { ok: false, checkedAt: Date.now() };
+    return false;
+  }
+}
+
+export async function getAgentVpnStatus(): Promise<AgentVpnStatus> {
+  const reachable = await checkAgentHealth();
+  if (!reachable) {
+    return {
+      agentReachable: false,
+      available: false,
+      connected: false,
+      configured: false,
+      connectionExists: false,
+      connectionName: null,
+      needsSelection: true,
+      message: "Agente VPN não detectado neste computador.",
+    };
+  }
+
+  try {
+    const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/vpn/status`, undefined, AGENT_REQUEST_TIMEOUT_MS);
     if (!response.ok) {
       return {
         agentReachable: true,
@@ -75,14 +112,14 @@ export async function getAgentVpnStatus(): Promise<AgentVpnStatus> {
     };
   } catch {
     return {
-      agentReachable: false,
+      agentReachable: true,
       available: false,
       connected: false,
       configured: false,
       connectionExists: false,
       connectionName: null,
       needsSelection: true,
-      message: "Agente VPN não detectado neste computador.",
+      message: "Agente VPN respondeu, mas demorou para retornar status. Tente novamente em instantes.",
     };
   }
 }
@@ -92,7 +129,7 @@ export async function setAgentVpnEnabled(enabled: boolean): Promise<AgentVpnStat
     const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/vpn/toggle`, {
       method: "POST",
       body: JSON.stringify({ enabled }),
-    });
+    }, AGENT_TOGGLE_TIMEOUT_MS);
     if (!response.ok) {
       return getAgentVpnStatus();
     }
@@ -113,8 +150,22 @@ export async function setAgentVpnEnabled(enabled: boolean): Promise<AgentVpnStat
 }
 
 export async function listAgentVpnConnections(): Promise<AgentVpnConnections> {
+  const reachable = await checkAgentHealth();
+  if (!reachable) {
+    return {
+      available: false,
+      selectedConnectionName: null,
+      connections: [],
+      message: "Agente VPN não detectado neste computador.",
+    };
+  }
+
   try {
-    const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/vpn/connections`);
+    const response = await fetchWithTimeout(
+      `${AGENT_BASE_URL}/v1/vpn/connections`,
+      undefined,
+      AGENT_REQUEST_TIMEOUT_MS,
+    );
     if (!response.ok) {
       return { available: false, selectedConnectionName: null, connections: [], message: "Não foi possível listar VPNs." };
     }

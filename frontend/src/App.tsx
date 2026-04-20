@@ -299,10 +299,52 @@ export default function App() {
     setIsVpnInstallModalOpen(true);
   };
 
+  const tryResolveSingleVpnSelection = async (): Promise<boolean> => {
+    const data = await listAgentVpnConnections();
+    setVpnConnections(data);
+
+    const selectedName =
+      data.selectedConnectionName && data.connections.includes(data.selectedConnectionName)
+        ? data.selectedConnectionName
+        : data.connections.length === 1
+          ? data.connections[0]
+          : "";
+
+    if (!selectedName) {
+      return false;
+    }
+
+    setSelectedVpnName(selectedName);
+    const next = await setAgentVpnConnection(selectedName);
+    setVpnStatus(next);
+    await loadVpnConnections();
+    setIsVpnConfigModalOpen(false);
+    return !next.needsSelection && next.connectionExists;
+  };
+
   const onToggleVpn = async () => {
-    const shouldEnable = !vpnConnected;
-    if (!vpnCanToggle) {
-      if (vpnNeedsSelection) {
+    let currentStatus = vpnStatus ?? (await getAgentVpnStatus());
+    setVpnStatus(currentStatus);
+
+    if (currentStatus.needsSelection) {
+      const autoResolved = await tryResolveSingleVpnSelection();
+      if (autoResolved) {
+        currentStatus = await getAgentVpnStatus();
+        setVpnStatus(currentStatus);
+      }
+    }
+
+    const canToggleNow = Boolean(currentStatus.available && !currentStatus.needsSelection);
+    const looksWithoutAgentNow =
+      !currentStatus.agentReachable ||
+      (!currentStatus.available &&
+        !currentStatus.configured &&
+        !currentStatus.connectionExists &&
+        !currentStatus.connected);
+    const shouldEnable = !currentStatus.connected;
+
+    if (!canToggleNow) {
+      if (currentStatus.needsSelection) {
         setVpnFeedbackTone("info");
         setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
         setVpnFeedbackAction(null);
@@ -313,29 +355,20 @@ export default function App() {
       openInstallAgentFlow();
       return;
     }
-    if (vpnLooksWithoutAgent) {
+    if (looksWithoutAgentNow) {
       openInstallAgentFlow();
       return;
     }
-    if (!vpnAgentReachable) {
+    if (!currentStatus.agentReachable) {
       setVpnFeedbackTone("info");
       setVpnFeedbackMessage("Agente VPN não instalado. Instale o agente para habilitar o ligar/desligar.");
       setVpnFeedbackAction("install");
       setIsVpnInstallModalOpen(true);
       return;
     }
-    if (vpnNeedsSelection) {
-      setVpnFeedbackTone("info");
-      setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
-      setVpnFeedbackAction(null);
-      setIsVpnConfigModalOpen(true);
-      await loadVpnConnections();
-      return;
-    }
-    if (vpnBusy) return;
     setVpnBusy(true);
     try {
-      const next = await setAgentVpnEnabled(!vpnConnected);
+      const next = await setAgentVpnEnabled(shouldEnable);
       setVpnStatus(next);
       const nextLooksWithoutAgent =
         !next.agentReachable ||
@@ -353,7 +386,7 @@ export default function App() {
       if (!shouldEnable && next.connected) {
         setVpnFeedbackTone("error");
         setVpnFeedbackAction(null);
-        setVpnFeedbackMessage(next.message ?? "Não foi possível desligar a VPN neste momento.");
+        setVpnFeedbackMessage(next.message ?? "Não foi possível desligar a VPN neste momento. Tente novamente.");
         return;
       }
     } finally {
@@ -363,8 +396,27 @@ export default function App() {
   };
 
   const onVpnBadgeInteract = async (intentToggle: boolean) => {
-    if (!vpnCanToggle) {
-      if (vpnNeedsSelection) {
+    let currentStatus = vpnStatus ?? (await getAgentVpnStatus());
+    setVpnStatus(currentStatus);
+
+    if (currentStatus.needsSelection) {
+      const autoResolved = await tryResolveSingleVpnSelection();
+      if (autoResolved) {
+        currentStatus = await getAgentVpnStatus();
+        setVpnStatus(currentStatus);
+      }
+    }
+
+    const canToggleNow = Boolean(currentStatus.available && !currentStatus.needsSelection);
+    const looksWithoutAgentNow =
+      !currentStatus.agentReachable ||
+      (!currentStatus.available &&
+        !currentStatus.configured &&
+        !currentStatus.connectionExists &&
+        !currentStatus.connected);
+
+    if (!canToggleNow) {
+      if (currentStatus.needsSelection) {
         setVpnFeedbackTone("info");
         setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
         setVpnFeedbackAction(null);
@@ -375,16 +427,8 @@ export default function App() {
       openInstallAgentFlow();
       return;
     }
-    if (vpnLooksWithoutAgent) {
+    if (looksWithoutAgentNow) {
       openInstallAgentFlow();
-      return;
-    }
-    if (vpnNeedsSelection) {
-      setVpnFeedbackTone("info");
-      setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
-      setVpnFeedbackAction(null);
-      setIsVpnConfigModalOpen(true);
-      await loadVpnConnections();
       return;
     }
     if (!intentToggle) return;
@@ -545,8 +589,8 @@ export default function App() {
               role="switch"
               aria-checked={vpnConnected}
               aria-label={vpnConnected ? "Desligar VPN" : "Ligar VPN"}
-              aria-disabled={!vpnCanToggle || vpnBusy}
-              disabled={vpnBusy}
+              aria-disabled={!vpnCanToggle}
+              disabled={false}
               onMouseDown={(event) => {
                 event.stopPropagation();
                 if (!vpnCanToggle) {
