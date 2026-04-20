@@ -83,12 +83,41 @@ async function saveAgentConfig(connectionName: string): Promise<void> {
 
 async function listVpnConnections(): Promise<string[]> {
   if (process.platform !== "win32") return [];
-  const output = await runPowerShell(
-    "$names = @(); " +
-      "try { $names += (Get-VpnConnection -AllUserConnection -ErrorAction Stop | Select-Object -ExpandProperty Name) } catch {}; " +
-      "try { $names += (Get-VpnConnection -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) } catch {}; " +
-      "$names | Where-Object { $_ -and $_.Trim().Length -gt 0 } | Sort-Object -Unique | ForEach-Object { Write-Output $_ }",
-  );
+  const output = await runPowerShell(`
+    $names = New-Object System.Collections.Generic.List[string]
+    try {
+      Get-VpnConnection -AllUserConnection -ErrorAction Stop |
+        Select-Object -ExpandProperty Name |
+        ForEach-Object {
+          if ($_ -and $_.Trim().Length -gt 0) { $names.Add($_.Trim()) }
+        }
+    } catch {}
+
+    try {
+      Get-VpnConnection -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty Name |
+        ForEach-Object {
+          if ($_ -and $_.Trim().Length -gt 0) { $names.Add($_.Trim()) }
+        }
+    } catch {}
+
+    $pbkPaths = @(
+      (Join-Path $env:APPDATA 'Microsoft\\Network\\Connections\\Pbk\\rasphone.pbk'),
+      (Join-Path $env:ProgramData 'Microsoft\\Network\\Connections\\Pbk\\rasphone.pbk')
+    )
+
+    foreach ($pbk in $pbkPaths) {
+      if (-not (Test-Path $pbk)) { continue }
+      Get-Content -Path $pbk -ErrorAction SilentlyContinue |
+        Where-Object { $_ -match '^\\[(.+)\\]$' } |
+        ForEach-Object {
+          $entry = $matches[1].Trim()
+          if ($entry) { $names.Add($entry) }
+        }
+    }
+
+    $names | Sort-Object -Unique | ForEach-Object { Write-Output $_ }
+  `);
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -120,13 +149,12 @@ async function getVpnStatus(): Promise<VpnStatusResponse> {
     };
   }
 
-  const name = quotePowerShell(configuredConnectionName);
-  const statusOutput = await runPowerShell(
-    `$vpn = Get-VpnConnection -Name ${name} -ErrorAction SilentlyContinue; if ($null -eq $vpn) { Write-Output 'NOT_FOUND' } else { Write-Output $vpn.ConnectionStatus }`,
+  const allConnections = await listVpnConnections();
+  const connectionExists = allConnections.some(
+    (name) => name.toLowerCase() === configuredConnectionName.toLowerCase(),
   );
-  const status = statusOutput.trim();
 
-  if (status === "NOT_FOUND") {
+  if (!connectionExists) {
     return {
       available: false,
       connected: false,
@@ -135,6 +163,26 @@ async function getVpnStatus(): Promise<VpnStatusResponse> {
       connectionName: configuredConnectionName,
       needsSelection: true,
       message: "VPN configurada não foi encontrada. Selecione novamente.",
+    };
+  }
+
+  const name = quotePowerShell(configuredConnectionName);
+  const statusOutput = await runPowerShell(
+    `$vpn = Get-VpnConnection -Name ${name} -ErrorAction SilentlyContinue; if ($null -eq $vpn) { Write-Output 'NOT_FOUND' } else { Write-Output $vpn.ConnectionStatus }`,
+  );
+  const status = statusOutput.trim();
+
+  if (status === "NOT_FOUND") {
+    const rasdialOutput = await runPowerShell("rasdial");
+    const connectedByRasdial = rasdialOutput.toLowerCase().includes(configuredConnectionName.toLowerCase());
+    return {
+      available: true,
+      connected: connectedByRasdial,
+      configured: true,
+      connectionExists: true,
+      connectionName: configuredConnectionName,
+      needsSelection: false,
+      message: connectedByRasdial ? undefined : "VPN detectada no Windows. Clique no toggle para conectar.",
     };
   }
 
