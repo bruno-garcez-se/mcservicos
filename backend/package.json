@@ -29,6 +29,7 @@
     "infosimples-sdk": "^0.3.3",
     "jsonwebtoken": "^9.0.3",
     "node-forge": "^1.4.0",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
     "playwright": "^1.59.1",
     "socket.io": "^4.8.3",

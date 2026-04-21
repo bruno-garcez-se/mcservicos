@@ -576,7 +576,16 @@ financeRouter.delete("/entries/:id", async (req, res) => {
     id: number;
     description: string;
     category: string;
-  }>(`SELECT id, description, category FROM financial_entries WHERE id = $1`, [params.id]);
+    template_id: number | null;
+    due_date: string | null;
+    reference_month: string | null;
+    entry_date: string;
+  }>(
+    `SELECT id, description, category, template_id, due_date::text AS due_date, reference_month::text AS reference_month, entry_date::text AS entry_date
+     FROM financial_entries
+     WHERE id = $1`,
+    [params.id],
+  );
   const targetRow = target.rows[0];
   if (!targetRow) {
     res.status(404).json({ message: "Lançamento financeiro não encontrado." });
@@ -585,34 +594,54 @@ financeRouter.delete("/entries/:id", async (req, res) => {
 
   let deletedCount = 0;
   if (payload.scope === "from_current") {
-    const parsed = targetRow.description.match(/^(.*)\s\((\d+)\/(\d+)\)$/);
-    if (parsed) {
-      const baseDescription = (parsed[1] ?? "").trim();
-      const currentIndex = Number(parsed[2] ?? "0");
-      const totalCount = Number(parsed[3] ?? "0");
-      const candidates = await pool.query<{ id: number; description: string }>(
-        `SELECT id, description
-         FROM financial_entries
-         WHERE category = $1
-           AND description LIKE $2`,
-        [targetRow.category ?? "", `${baseDescription} (%/${totalCount})`],
+    if (targetRow.template_id) {
+      const currentReferenceDate = targetRow.reference_month ?? targetRow.due_date ?? targetRow.entry_date;
+      const deleted = await pool.query<{ id: number }>(
+        `DELETE FROM financial_entries
+         WHERE template_id = $1
+           AND COALESCE(reference_month, due_date, entry_date) >= $2::date
+         RETURNING id`,
+        [targetRow.template_id, currentReferenceDate],
       );
-      const idsToDelete = candidates.rows
-        .map((row) => {
-          const rowMatch = row.description.match(/\((\d+)\/(\d+)\)$/);
-          if (!rowMatch) return null;
-          const rowIndex = Number(rowMatch[1] ?? "0");
-          const rowTotal = Number(rowMatch[2] ?? "0");
-          if (rowTotal !== totalCount || rowIndex < currentIndex) return null;
-          return row.id;
-        })
-        .filter((id): id is number => typeof id === "number" && Number.isFinite(id) && id > 0);
+      deletedCount = deleted.rowCount ?? 0;
+      await pool.query(
+        `UPDATE financial_expense_templates
+         SET active = false,
+             updated_by = $1,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [user.id, targetRow.template_id],
+      );
+    } else {
+      const parsed = targetRow.description.match(/^(.*)\s\((\d+)\/(\d+)\)$/);
+      if (parsed) {
+        const baseDescription = (parsed[1] ?? "").trim();
+        const currentIndex = Number(parsed[2] ?? "0");
+        const totalCount = Number(parsed[3] ?? "0");
+        const candidates = await pool.query<{ id: number; description: string }>(
+          `SELECT id, description
+           FROM financial_entries
+           WHERE category = $1
+             AND description LIKE $2`,
+          [targetRow.category ?? "", `${baseDescription} (%/${totalCount})`],
+        );
+        const idsToDelete = candidates.rows
+          .map((row) => {
+            const rowMatch = row.description.match(/\((\d+)\/(\d+)\)$/);
+            if (!rowMatch) return null;
+            const rowIndex = Number(rowMatch[1] ?? "0");
+            const rowTotal = Number(rowMatch[2] ?? "0");
+            if (rowTotal !== totalCount || rowIndex < currentIndex) return null;
+            return row.id;
+          })
+          .filter((id): id is number => typeof id === "number" && Number.isFinite(id) && id > 0);
 
-      if (idsToDelete.length > 0) {
-        const deleted = await pool.query<{ id: number }>(`DELETE FROM financial_entries WHERE id = ANY($1::int[]) RETURNING id`, [
-          idsToDelete,
-        ]);
-        deletedCount = deleted.rowCount ?? 0;
+        if (idsToDelete.length > 0) {
+          const deleted = await pool.query<{ id: number }>(`DELETE FROM financial_entries WHERE id = ANY($1::int[]) RETURNING id`, [
+            idsToDelete,
+          ]);
+          deletedCount = deleted.rowCount ?? 0;
+        }
       }
     }
   } else {

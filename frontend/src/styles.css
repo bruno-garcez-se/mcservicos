@@ -1354,14 +1354,66 @@ fieldset {
   gap: 14px;
 }
 
+.financeiro-launchamentos-card {
+  padding-top: 10px;
+}
+
 .financeiro-page .section-header-row .row {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
 
 .financeiro-action-button {
-  min-width: 138px;
+  width: 112px;
+  min-width: 112px;
   white-space: nowrap;
+  text-align: center;
+}
+
+.financeiro-action-dropdown {
+  position: relative;
+}
+
+.financeiro-action-dropdown .financeiro-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.financeiro-action-dropdown-caret {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.financeiro-action-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 170px;
+  border: 1px solid #c9d8eb;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow:
+    0 12px 24px rgba(14, 41, 70, 0.16),
+    0 4px 10px rgba(14, 41, 70, 0.08);
+  padding: 4px;
+  z-index: 20;
+}
+
+.financeiro-action-dropdown-menu button {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #22486d;
+  font-weight: 600;
+}
+
+.financeiro-action-dropdown-menu button:hover {
+  background: #eef4fb;
 }
 
 .financeiro-action-button-receita {
@@ -1387,11 +1439,25 @@ fieldset {
 }
 
 .financeiro-month-picker-button {
-  min-width: 190px;
+  min-width: 148px;
   text-transform: capitalize;
-  text-align: left;
+  text-align: center;
   padding-right: 34px;
   cursor: pointer;
+  position: relative;
+  border-color: #2a78c9;
+  color: #0f4f95;
+}
+
+.financeiro-month-picker-button::after {
+  content: "▼";
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: #5b6f84;
+  pointer-events: none;
 }
 
 .financeiro-month-picker-input {
@@ -1406,22 +1472,27 @@ fieldset {
 
 .financeiro-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
   margin-top: 10px;
 }
 
 .financeiro-card {
   border: 1px solid #d4dfed;
   border-radius: 12px;
-  padding: 14px;
+  padding: 12px;
   background: linear-gradient(180deg, #f9fbff 0%, #f3f7fd 100%);
+  text-align: center;
 }
 
 .financeiro-card h3 {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: 14px;
   color: #1f3f66;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
 }
 
 .financeiro-card p {
@@ -1431,24 +1502,67 @@ fieldset {
 }
 
 .financeiro-card strong {
-  font-size: 18px;
+  font-size: 24px;
+  font-weight: 800;
   color: #173d66;
+  line-height: 1.1;
 }
 
-.financeiro-card-receitas {
+.financeiro-card h3 small {
+  font-size: 12px;
+  color: #74879a;
+  font-weight: 600;
+}
+
+.financeiro-card-recebido {
   border-color: #c9e8d6;
 }
 
-.financeiro-card-despesas {
-  border-color: #e8d2d2;
+.financeiro-card .financeiro-card-value-recebido {
+  color: #128244;
 }
 
-.financeiro-card-saldo-pos {
-  border-color: #c8dfef;
+.financeiro-card-aguardando {
+  border-color: #c9dcf2;
 }
 
-.financeiro-card-saldo-neg {
+.financeiro-card .financeiro-card-value-aguardando {
+  color: #175fae;
+}
+
+.financeiro-card .financeiro-card-value-pagas {
+  color: #6d7b8b;
+}
+
+.financeiro-card-vencidas {
   border-color: #f0caca;
+}
+
+.financeiro-card .financeiro-card-value-vencidas {
+  color: #bf2626;
+}
+
+.financeiro-card-subtotal {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.financeiro-card .financeiro-card-value-hoje {
+  color: #d57a15;
+}
+
+.financeiro-card-subtotal span {
+  font-size: 12px;
+  color: #768a9f;
+}
+
+.financeiro-card-subtotal .financeiro-card-value-restante {
+  font-size: 13px;
+  font-weight: 600;
+  color: #768a9f;
 }
 
 .financeiro-form {
@@ -1461,11 +1575,82 @@ fieldset {
   gap: 10px;
 }
 
+.financeiro-installment-preview-inline {
+  margin: 0;
+  align-self: center;
+  justify-self: center;
+  text-align: center;
+  font-size: 13px;
+}
+
+.financeiro-value-inline-options {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.financeiro-inline-checkbox {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.financeiro-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.financeiro-day-switch {
+  margin-bottom: 10px;
+}
+
+.financeiro-quick-extra-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.financeiro-quick-extra-header strong {
+  color: #284868;
+}
+
+.financeiro-quick-extra-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.financeiro-quick-extra-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+  gap: 8px;
+}
+
 .financeiro-payables-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
   margin-bottom: 12px;
+}
+
+.financeiro-bulk-actions-row {
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 0;
+}
+
+.financeiro-bulk-actions-slot {
+  min-height: 42px;
+  margin: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .financeiro-payables-card {
@@ -1561,6 +1746,41 @@ fieldset {
   color: #9a2f2f;
 }
 
+.documentos-certificado-row {
+  margin-top: 8px;
+  margin-bottom: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.documentos-certificado-button {
+  min-height: 30px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  border-color: #c7d8ec;
+  background: #f3f8ff;
+  color: #1a4f80;
+}
+
+.documentos-certificado-button:hover {
+  background: #eaf2ff;
+  border-color: #a9c6e8;
+}
+
+.documentos-certificado-badge {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: #607285;
+  opacity: 0.92;
+}
+
 .documentos-refresh-note {
   margin: 8px 0 10px;
   color: #5b6f86;
@@ -1590,6 +1810,33 @@ fieldset {
 .documentos-portal-button:hover {
   background: #eaf2ff;
   border-color: #a9c6e8;
+}
+
+.documentos-extract-feedback {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.documentos-extract-feedback.is-neutral {
+  color: #607285;
+}
+
+.documentos-extract-feedback.is-success {
+  color: #1f7c47;
+}
+
+.documentos-extract-feedback.is-warning {
+  color: #9a6a14;
+}
+
+.documentos-extract-feedback.is-error {
+  color: #9a2f2f;
+}
+
+.transaction-data-table td.documentos-status-vencida {
+  color: #b4232a;
+  font-weight: 700;
 }
 
 .extra-field-row {
@@ -3485,8 +3732,12 @@ textarea {
 
 .transaction-status-icon.paid {
   color: #1f7c47;
-  border-color: #a8d9bc;
-  background: #eefaf3;
+  border-color: transparent;
+  background: transparent;
+}
+
+.financeiro-status-cell-icon {
+  margin: 0 auto;
 }
 
 .transaction-status-icon.placeholder {

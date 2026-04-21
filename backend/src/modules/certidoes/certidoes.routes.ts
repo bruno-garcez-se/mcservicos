@@ -6,6 +6,7 @@ import {
   getCertidoesStatus,
   getDefaultCnpj,
   refreshCertidoes,
+  extractManualDataFromPdf,
   upsertManualCertidao,
   upsertCertificateConfig,
 } from "./certidoes.service";
@@ -71,6 +72,26 @@ certidoesRouter.post("/refresh", async (req, res) => {
   });
   const data = await getCertidoesStatus(payload.cnpj);
   res.json(data);
+});
+
+certidoesRouter.post("/manual/extract", async (req, res) => {
+  const payload = z
+    .object({
+      certType: certTypeSchema,
+      pdfBase64: z.string().min(100).max(20_000_000),
+    })
+    .parse(req.body ?? {});
+
+  const extracted = await extractManualDataFromPdf({
+    certType: payload.certType,
+    pdfBase64: payload.pdfBase64,
+  });
+  res.json({
+    issueDate: extracted.issueDate,
+    expiryDate: extracted.expiryDate,
+    controlCode: extracted.controlCode,
+    foundAny: Boolean(extracted.issueDate || extracted.expiryDate || extracted.controlCode),
+  });
 });
 
 certidoesRouter.post("/manual", async (req, res) => {

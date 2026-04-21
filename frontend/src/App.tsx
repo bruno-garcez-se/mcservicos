@@ -197,6 +197,9 @@ export default function App() {
   const canViewSenhas = isAdmin || menuVisibility.senhas;
   const canViewTransacional = isAdmin || menuVisibility.transacional;
   const canViewNegocial = isAdmin || menuVisibility.negocial;
+  const canViewFinanceiro = isAdmin;
+  const canViewDocumentos = isAdmin;
+  const canViewContatos = true;
 
   const loadVpnStatus = useCallback(async () => {
     const status = await getAgentVpnStatus();
@@ -238,28 +241,30 @@ export default function App() {
 
   useEffect(() => {
     const tabAllowed =
-      tab === "contatos" ||
-      tab === "documentos" ||
+      (tab === "contatos" && canViewContatos) ||
+      (tab === "documentos" && canViewDocumentos) ||
       tab === "usuarios" ||
       (tab === "senhas" && canViewSenhas) ||
       (tab === "transacional" && canViewTransacional) ||
-      tab === "financeiro" ||
+      (tab === "financeiro" && canViewFinanceiro) ||
       (tab === "negocial" && canViewNegocial);
     if (isAdmin && tabAllowed) return;
     if (!isAdmin && tab === "usuarios") {
       if (canViewSenhas) setTab("senhas");
       else if (canViewTransacional) setTab("transacional");
       else if (canViewNegocial) setTab("negocial");
-      else setTab("financeiro");
+      else if (canViewContatos) setTab("contatos");
+      else setTab("senhas");
       return;
     }
     if (!tabAllowed) {
       if (canViewSenhas) setTab("senhas");
       else if (canViewTransacional) setTab("transacional");
       else if (canViewNegocial) setTab("negocial");
-      else setTab("financeiro");
+      else if (canViewContatos) setTab("contatos");
+      else setTab("senhas");
     }
-  }, [isAdmin, tab, canViewSenhas, canViewTransacional, canViewNegocial]);
+  }, [isAdmin, tab, canViewSenhas, canViewTransacional, canViewNegocial, canViewFinanceiro, canViewDocumentos, canViewContatos]);
 
   useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
@@ -669,26 +674,30 @@ export default function App() {
               </span>
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() => setTab("financeiro")}
-            className={`nav-tab ${tab === "financeiro" ? "active" : ""}`}
-          >
-            <span className="nav-tab-icon-label">
-              <FinanceIcon />
-              <span>Financeiro</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab("documentos")}
-            className={`nav-tab ${tab === "documentos" ? "active" : ""}`}
-          >
-            <span className="nav-tab-icon-label">
-              <DocumentsIcon />
-              <span>Documentos</span>
-            </span>
-          </button>
+          {canViewFinanceiro ? (
+            <button
+              type="button"
+              onClick={() => setTab("financeiro")}
+              className={`nav-tab ${tab === "financeiro" ? "active" : ""}`}
+            >
+              <span className="nav-tab-icon-label">
+                <FinanceIcon />
+                <span>Financeiro</span>
+              </span>
+            </button>
+          ) : null}
+          {canViewDocumentos ? (
+            <button
+              type="button"
+              onClick={() => setTab("documentos")}
+              className={`nav-tab ${tab === "documentos" ? "active" : ""}`}
+            >
+              <span className="nav-tab-icon-label">
+                <DocumentsIcon />
+                <span>Documentos</span>
+              </span>
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => setTab("contatos")}
@@ -806,10 +815,10 @@ export default function App() {
         <Suspense fallback={<p className="screen-center">Carregando módulo...</p>}>
           {tab === "senhas" && canViewSenhas ? <SenhasPage /> : null}
           {tab === "transacional" && canViewTransacional ? <TransacionalPage /> : null}
-          {tab === "financeiro" ? <FinanceiroPage /> : null}
+          {tab === "financeiro" && canViewFinanceiro ? <FinanceiroPage /> : null}
           {tab === "negocial" && canViewNegocial ? <EmprestimosPage /> : null}
           {tab === "contatos" ? <ContatosPage /> : null}
-          {tab === "documentos" ? <DocumentosPage /> : null}
+          {tab === "documentos" && canViewDocumentos ? <DocumentosPage /> : null}
           {tab === "usuarios" && isAdmin ? <UsersPage /> : null}
         </Suspense>
       </main>

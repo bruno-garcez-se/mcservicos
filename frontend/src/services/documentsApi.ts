@@ -43,6 +43,19 @@ export async function registerManualCertidao(payload: {
   return data;
 }
 
+export async function extractManualCertidaoData(payload: {
+  certType: DocumentCertidaoTipo;
+  pdfBase64: string;
+}): Promise<{
+  issueDate: string | null;
+  expiryDate: string | null;
+  controlCode: string | null;
+  foundAny: boolean;
+}> {
+  const { data } = await http.post("/documents/certidoes/manual/extract", payload);
+  return data;
+}
+
 export async function downloadCertidao(cnpj: string, certType: DocumentCertidaoTipo): Promise<void> {
   const baseUrl = (import.meta.env.VITE_API_URL ?? "http://localhost:3333").replace(/\/+$/, "");
   const url = `${baseUrl}/documents/certidoes/${certType}/download?cnpj=${encodeURIComponent(cnpj)}`;

@@ -13,8 +13,10 @@ import {
 import { CndtProvider } from "./providers/cndt.provider";
 import { CnfProvider } from "./providers/cnf.provider";
 import { CrfProvider } from "./providers/crf.provider";
+import { extractControlCodeByLabel } from "./providers/provider.utils";
 import { BackendRunner } from "./runners/backend.runner";
 import { AgentRunner } from "./runners/agent.runner";
+import { PDFParse } from "pdf-parse";
 
 const CERT_TYPES: CertidaoTipo[] = ["CNDT", "CNF", "CRF"];
 const EXPIRING_WINDOW_DAYS = Number(process.env.CERTIDOES_EXPIRING_WINDOW_DAYS || 7);
@@ -216,6 +218,60 @@ async function savePdf(cnpj: string, certType: CertidaoTipo, base64: string): Pr
 function selectRunner(mode: RunnerMode) {
   if (mode === "agent") return new AgentRunner();
   return new BackendRunner();
+}
+
+function cleanPdfText(rawText: string): string {
+  return rawText.replace(/\u0000/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function extractControlCodeFromText(certType: CertidaoTipo, rawText: string): string | null {
+  const labelsByType: Record<CertidaoTipo, string[]> = {
+    CNDT: ["Código de controle", "Código de verificação", "Número da certidão", "Certidão nº"],
+    CNF: ["Código de controle", "Número da certidão", "Número", "Certidão nº"],
+    CRF: ["Certificação Número", "Chave de identificação", "Código de controle", "Número da certidão", "Certificado nº"],
+  };
+  return extractControlCodeByLabel(rawText, labelsByType[certType]);
+}
+
+export async function extractManualDataFromPdf(input: {
+  certType: CertidaoTipo;
+  pdfBase64: string;
+}): Promise<{
+  issueDate: string | null;
+  expiryDate: string | null;
+  controlCode: string | null;
+  rawText: string | null;
+}> {
+  const data = Buffer.from(input.pdfBase64, "base64");
+  const parser = new PDFParse({ data });
+  let parsedText = "";
+  try {
+    const parsed = await parser.getText();
+    parsedText = parsed.text || "";
+  } finally {
+    await parser.destroy();
+  }
+  const rawText = cleanPdfText(parsedText);
+  if (!rawText) {
+    return {
+      issueDate: null,
+      expiryDate: null,
+      controlCode: null,
+      rawText: null,
+    };
+  }
+  const controlCode = extractControlCodeFromText(input.certType, rawText);
+  const normalized = providers[input.certType].normalize({
+    ok: true,
+    rawText,
+    controlCode,
+  });
+  return {
+    issueDate: normalized.issueDate ?? null,
+    expiryDate: normalized.expiryDate ?? null,
+    controlCode: normalized.controlCode ?? null,
+    rawText: normalized.rawText ?? rawText,
+  };
 }
 
 export async function upsertCertificateConfig(input: {
