@@ -1,6 +1,6 @@
 import { CertidoesRunner, CertidoesRunnerInput } from "./certidoes.runner";
 import { CertidaoProviderPayload } from "../certidoes.types";
-import { chromium } from "playwright";
+import { Browser, BrowserContext, chromium } from "playwright";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -42,6 +42,22 @@ function toIsoDate(ptBrDate: string | null): string | null {
   const parts = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(ptBrDate.trim());
   if (!parts) return null;
   return `${parts[3]}-${parts[2]}-${parts[1]}`;
+}
+
+function mapPlaywrightError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("executable doesn't exist") ||
+    lower.includes("playwright install") ||
+    lower.includes("browser not found")
+  ) {
+    return "Automação CRF indisponível no servidor: navegador Playwright não instalado neste ambiente.";
+  }
+  if (lower.includes("timed out")) {
+    return "Automação CRF expirou por tempo limite no portal. Tente novamente.";
+  }
+  return `Falha na automação CRF: ${message}`;
 }
 
 function stringifyRaw(value: unknown): string {
@@ -175,14 +191,16 @@ async function fetchFromInfoSimples(input: CertidoesRunnerInput): Promise<Certid
 }
 
 async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPayload> {
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    locale: "pt-BR",
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-  });
-  const page = await context.newPage();
+  let browser: Browser | null = null;
+  let context: BrowserContext | null = null;
   try {
+    browser = await chromium.launch({ headless: true });
+    context = await browser.newContext({
+      locale: "pt-BR",
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    });
+    const page = await context.newPage();
     const timeoutMs = Number(process.env.CERTIDOES_PLAYWRIGHT_TIMEOUT_MS || 60000);
     const response = await page.goto(
       "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
@@ -307,9 +325,22 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
       sourceUrl: page.url(),
       rawText: pageText.slice(0, 10000),
     };
+  } catch (error) {
+    return {
+      ok: false,
+      errorMessage: mapPlaywrightError(error),
+    };
   } finally {
-    await context.close();
-    await browser.close();
+    try {
+      if (context) await context.close();
+    } catch {
+      // noop
+    }
+    try {
+      if (browser) await browser.close();
+    } catch {
+      // noop
+    }
   }
 }
 

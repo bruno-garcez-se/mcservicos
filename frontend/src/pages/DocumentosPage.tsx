@@ -8,6 +8,12 @@ const CERT_LABELS: Record<DocumentCertidaoTipo, string> = {
   CRF: "CRF - FGTS",
 };
 
+const CERT_REFRESH_MODE: Record<DocumentCertidaoTipo, "manual" | "automatico"> = {
+  CNDT: "manual",
+  CNF: "manual",
+  CRF: "automatico",
+};
+
 function normalizeCnpj(value: string): string {
   return value.replace(/\D/g, "");
 }
@@ -52,6 +58,14 @@ function computeCertificateExpiryTone(dateValue: string | null): "ok" | "warning
 function normalizeCertErrorMessage(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.includes("executable doesn't exist") ||
+    lower.includes("playwright install") ||
+    lower.includes("browserType.launch".toLowerCase())
+  ) {
+    return "Automação CRF indisponível no servidor (navegador Playwright não instalado).";
+  }
   try {
     const parsed = JSON.parse(trimmed) as { errorMessage?: unknown; message?: unknown };
     if (typeof parsed.errorMessage === "string" && parsed.errorMessage.trim()) return parsed.errorMessage.trim();
@@ -157,11 +171,18 @@ export function DocumentosPage() {
       setMessage("Informe um CNPJ válido para atualizar as certidões.");
       return;
     }
+    const onlyAutomatic =
+      certTypes?.filter((type) => CERT_REFRESH_MODE[type] === "automatico") ??
+      (["CRF"] as DocumentCertidaoTipo[]);
+    if (onlyAutomatic.length === 0) {
+      setMessage("CNDT e CNF são manuais. Apenas CRF possui atualização automática.");
+      return;
+    }
     setRefreshing(true);
     try {
-      const data = await refreshCertidoes({ cnpj: normalized, certTypes });
+      const data = await refreshCertidoes({ cnpj: normalized, certTypes: onlyAutomatic });
       setCertidoes(data.items);
-      setMessage("Atualização das certidões concluída.");
+      setMessage("Atualização automática concluída (CRF). CNDT e CNF são manuais.");
     } catch {
       setMessage("Falha ao atualizar certidões.");
     } finally {
@@ -202,10 +223,13 @@ export function DocumentosPage() {
                   {certificateExpiresAt ? certificateExpiryInfo : "Sem certificado cadastrado."}
                 </span>
                 <button type="button" className="primary-button" onClick={() => void onRefresh()} disabled={refreshing || loading}>
-                  {refreshing ? "Atualizando..." : "Atualizar todas"}
+                  {refreshing ? "Atualizando..." : "Atualizar automáticas"}
                 </button>
               </div>
             </div>
+            <p className="documentos-refresh-note">
+              CNDT e CNF: geração manual pelo usuário. CRF (FGTS): atualização automática pelo sistema.
+            </p>
             <table className="transaction-data-table">
               <thead>
                 <tr>
@@ -236,8 +260,13 @@ export function DocumentosPage() {
                       <td>{item.lastCheckedAt ? new Date(item.lastCheckedAt).toLocaleString("pt-BR") : "-"}</td>
                       <td>
                         <div className="row">
-                          <button type="button" className="transaction-icon-button" onClick={() => void onRefresh([item.certType])}>
-                            Atualizar
+                          <button
+                            type="button"
+                            className="transaction-icon-button"
+                            onClick={() => void onRefresh([item.certType])}
+                            disabled={CERT_REFRESH_MODE[item.certType] !== "automatico"}
+                          >
+                            {CERT_REFRESH_MODE[item.certType] === "automatico" ? "Atualizar" : "Manual"}
                           </button>
                           <button
                             type="button"
@@ -248,6 +277,9 @@ export function DocumentosPage() {
                             Baixar
                           </button>
                         </div>
+                        {CERT_REFRESH_MODE[item.certType] === "manual" ? (
+                          <small className="documentos-manual-note">Emissão/renovação manual.</small>
+                        ) : null}
                         {item.lastError ? <small className="error-text">{normalizeCertErrorMessage(item.lastError)}</small> : null}
                       </td>
                     </tr>

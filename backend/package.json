@@ -6,6 +6,7 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
+    "postinstall": "playwright install chromium",
     "db:init": "tsx src/scripts/initDb.ts",
     "db:seed": "tsx src/scripts/seed.ts",
     "db:migrate:local-to-remote": "tsx src/scripts/migrateLocalToRemote.ts",
