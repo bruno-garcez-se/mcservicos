@@ -248,7 +248,7 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
 
     const cnpjInput = page
       .locator(
-        "input[id*='inscricao'], input[name*='inscricao'], input[placeholder*='Inscrição'], input[placeholder*='Inscricao']",
+        "input#mainForm\\:txtInscricao1, input[name='mainForm:txtInscricao1'], input[id*='inscricao'], input[name*='inscricao'], input[placeholder*='Inscrição'], input[placeholder*='Inscricao']",
       )
       .first();
     if ((await cnpjInput.count()) === 0) {
