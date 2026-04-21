@@ -250,3 +250,73 @@ export type Contact = {
   updatedAt: string;
   phones: ContactPhone[];
 };
+
+export type FinanceEntryType = "receita" | "despesa";
+
+export type FinanceEntry = {
+  id: number;
+  type: FinanceEntryType;
+  description: string;
+  category: string;
+  amount: number;
+  entryDate: string;
+  dueDate: string | null;
+  referenceMonth: string | null;
+  paidAt: string | null;
+  paidAmount: number | null;
+  templateId: number | null;
+  installmentGroupKey?: string | null;
+  installmentIndex?: number | null;
+  installmentTotal?: number | null;
+  status: "pago" | "pendente" | "atrasado";
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FinanceTotals = {
+  receitas: number;
+  despesas: number;
+  saldo: number;
+};
+
+export type FinanceExpenseTemplate = {
+  id: number;
+  description: string;
+  category: string;
+  defaultAmount: number;
+  dueDay: number;
+  startMonth?: string | null;
+  isVariable: boolean;
+  active: boolean;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DocumentCertidaoTipo = "CNDT" | "CNF" | "CRF";
+
+export type DocumentCertidaoStatus = "valida" | "vencendo" | "vencida" | "pendente" | "falha";
+
+export type DocumentCertificateConfig = {
+  cnpj: string;
+  runnerMode: "backend" | "agent";
+  certificateName: string | null;
+  certificateExpiresAt: string | null;
+  certificateUpdatedAt: string | null;
+};
+
+export type DocumentCertidao = {
+  certType: DocumentCertidaoTipo;
+  status: DocumentCertidaoStatus;
+  issueDate: string | null;
+  expiryDate: string | null;
+  controlCode: string | null;
+  sourceUrl: string | null;
+  storagePath: string | null;
+  fileHash: string | null;
+  lastCheckedAt: string | null;
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  updatedAt: string | null;
+};

@@ -20,6 +20,20 @@ Sistema interno com aba `Senhas`, controle por grupos/departamentos e atualizaca
 5. Rode tudo:
    - `npm run dev`
 
+## Certidoes online (Documentos)
+
+Para atualizar CNDT, CNF e CRF em ambiente online:
+
+1. Configure no backend:
+   - `CERTIDOES_INFOSIMPLES_TOKEN` com o token da API.
+   - `CERTIDOES_MOCK_MODE=false`.
+   - `CERTIDOES_FORCE_RUNNER=backend`.
+2. Suba o backend com essas variaveis.
+3. Em `Documentos > Certidoes`, clique em **Atualizar todas**.
+
+Observacao: sem token de provedor, o sistema retorna erro amigavel informando que a integracao online nao esta configurada.
+Observacao 2: para CRF, o backend tenta automacao direta via Playwright antes do provedor externo.
+
 ## Credenciais iniciais (seed)
 
 - Admin: `admin@empresa.com` / `Admin@123`

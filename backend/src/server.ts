@@ -2,6 +2,7 @@ import { createServer } from "http";
 import { app } from "./app";
 import { env } from "./config/env";
 import { pool } from "./db/pool";
+import { setupCertidoesScheduler } from "./modules/certidoes/certidoes.scheduler";
 import { setupSocket } from "./realtime/socket";
 
 async function bootstrap(): Promise<void> {
@@ -14,6 +15,7 @@ async function bootstrap(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log(`API rodando na porta ${env.PORT}`);
   });
+  setupCertidoesScheduler();
 }
 
 bootstrap().catch((err) => {

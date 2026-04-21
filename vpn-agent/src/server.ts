@@ -49,6 +49,8 @@ type ExecError = Error & {
   stderr?: string;
 };
 
+type CertidaoTipo = "CNDT" | "CNF" | "CRF";
+
 function quotePowerShell(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
@@ -435,6 +437,53 @@ app.post("/v1/vpn/toggle", async (req, res) => {
   const enabled = Boolean(req.body?.enabled);
   const status = await setVpnEnabled(enabled);
   res.json(status);
+});
+
+app.post("/v1/certidoes/refresh", async (req, res) => {
+  const certTypeRaw = String(req.body?.certType ?? "").trim().toUpperCase();
+  const certType = (["CNDT", "CNF", "CRF"] as const).find((item) => item === certTypeRaw) as CertidaoTipo | undefined;
+  const cnpj = String(req.body?.cnpj ?? "").replace(/\D/g, "");
+  const certificateName = String(req.body?.certificateName ?? "").trim();
+  const certificateExpiresAt = String(req.body?.certificateExpiresAt ?? "").trim();
+  if (!certType) {
+    res.status(400).json({ ok: false, errorMessage: "Tipo de certidão inválido." });
+    return;
+  }
+  if (cnpj.length !== 14) {
+    res.status(400).json({ ok: false, errorMessage: "CNPJ inválido para atualização da certidão." });
+    return;
+  }
+  if (!certificateName) {
+    res.status(400).json({ ok: false, errorMessage: "Certificado digital não configurado no agente local." });
+    return;
+  }
+  if (certificateExpiresAt) {
+    const expiryTime = Date.parse(`${certificateExpiresAt}T00:00:00`);
+    if (Number.isFinite(expiryTime) && expiryTime < Date.now()) {
+      res.status(400).json({ ok: false, errorMessage: "Certificado digital expirado no agente local." });
+      return;
+    }
+  }
+
+  if (process.env.CERTIDOES_MOCK_MODE !== "true") {
+    res.status(501).json({
+      ok: false,
+      errorMessage: "Automação local das certidões depende de script oficial instalado neste agente.",
+    });
+    return;
+  }
+
+  const today = new Date();
+  const expiry = new Date(today.getTime());
+  expiry.setDate(expiry.getDate() + 30);
+  res.json({
+    ok: true,
+    issueDate: today.toISOString().slice(0, 10),
+    expiryDate: expiry.toISOString().slice(0, 10),
+    controlCode: `AGENT-MOCK-${certType}-${Date.now()}`,
+    rawText: `Data de emissão: ${today.toLocaleDateString("pt-BR")}\nValidade: ${expiry.toLocaleDateString("pt-BR")}`,
+    pdfBase64: Buffer.from(`Certidão ${certType} - CNPJ ${cnpj} - gerada por agente local`).toString("base64"),
+  });
 });
 
 void (async () => {

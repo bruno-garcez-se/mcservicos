@@ -887,6 +887,40 @@ fieldset {
   min-width: 170px;
 }
 
+.financeiro-modal-cancel-button {
+  min-width: 120px;
+  border-color: #c9d9ee;
+  background: #f5f9ff;
+  color: #1a4f80;
+}
+
+.financeiro-modal-cancel-button:hover:not(:disabled) {
+  background: #eaf2ff;
+  border-color: #a9c6e8;
+}
+
+.financeiro-modal-danger-button {
+  min-width: 160px;
+  border-color: #efc8c8;
+  background: #fff5f5;
+  color: #9f1111;
+}
+
+.financeiro-modal-danger-button:hover:not(:disabled) {
+  background: #ffecec;
+  border-color: #dca3a3;
+}
+
+.financeiro-modal-error {
+  margin: 0;
+  font-size: 13px;
+  color: #9c2e2e;
+  background: #fff3f3;
+  border: 1px solid #efc5c5;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 @keyframes modalBackdropIn {
   from {
     opacity: 0;
@@ -1315,8 +1349,155 @@ fieldset {
   border-color: #f2b2b2;
 }
 
+.financeiro-page {
+  display: grid;
+  gap: 14px;
+}
+
+.financeiro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.financeiro-card {
+  border: 1px solid #d4dfed;
+  border-radius: 12px;
+  padding: 14px;
+  background: linear-gradient(180deg, #f9fbff 0%, #f3f7fd 100%);
+}
+
+.financeiro-card h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: #1f3f66;
+}
+
+.financeiro-card p {
+  margin: 0;
+  font-size: 13px;
+  color: #4e6480;
+}
+
+.financeiro-card strong {
+  font-size: 18px;
+  color: #173d66;
+}
+
+.financeiro-card-receitas {
+  border-color: #c9e8d6;
+}
+
+.financeiro-card-despesas {
+  border-color: #e8d2d2;
+}
+
+.financeiro-card-saldo-pos {
+  border-color: #c8dfef;
+}
+
+.financeiro-card-saldo-neg {
+  border-color: #f0caca;
+}
+
+.financeiro-form {
+  margin-top: 8px;
+}
+
+.financeiro-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.financeiro-payables-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.financeiro-payables-card {
+  border: 1px solid #d7e2f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f7fbff;
+}
+
+.financeiro-payables-card h4 {
+  margin: 0 0 8px;
+  color: #1f3f66;
+}
+
+.financeiro-payables-card p {
+  margin: 0;
+  color: #607285;
+  font-size: 13px;
+}
+
+.financeiro-payable-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid #e3ebf5;
+  padding-top: 6px;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.financeiro-category-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.financeiro-add-category-button {
+  min-width: 34px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+
 .muted-text {
   color: #607285;
+}
+
+.cert-expiry-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.cert-expiry-badge-neutral {
+  background: #eef4fb;
+  border-color: #d7e3f3;
+  color: #506781;
+}
+
+.cert-expiry-badge-ok {
+  background: #ebfbf1;
+  border-color: #b9e6c8;
+  color: #1d6a40;
+}
+
+.cert-expiry-badge-warning {
+  background: #fff8e8;
+  border-color: #f2ddb0;
+  color: #8a6520;
+}
+
+.cert-expiry-badge-danger {
+  background: #fff1f1;
+  border-color: #efc6c6;
+  color: #9a2f2f;
 }
 
 .extra-field-row {
@@ -3183,6 +3364,37 @@ textarea {
   border-color: #dca3a3;
 }
 
+.transaction-icon-button.success {
+  color: #1f7c47;
+  border-color: #a8d9bc;
+  background: #eefaf3;
+}
+
+.transaction-icon-button.success:hover {
+  background: #dff5e8;
+  border-color: #95cfad;
+}
+
+.transaction-status-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+.transaction-status-icon.paid {
+  color: #1f7c47;
+  border-color: #a8d9bc;
+  background: #eefaf3;
+}
+
+.transaction-status-icon.placeholder {
+  visibility: hidden;
+}
+
 .transaction-total-row td {
   font-weight: 700;
   background: #f2f7ff;
@@ -3214,6 +3426,13 @@ textarea {
   background: #fff3f3;
   border-color: #e5bbbb;
   color: #8a2c2c;
+}
+
+.transaction-status-chip.success.financeiro-paid-chip {
+  background: transparent;
+  border-color: transparent;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .button-icon-inline {

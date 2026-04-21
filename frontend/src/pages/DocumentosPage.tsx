@@ -1,0 +1,323 @@
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { DocumentCertidao, DocumentCertidaoStatus, DocumentCertidaoTipo } from "../types";
+import { downloadCertidao, getCertidoesStatus, refreshCertidoes, saveCertificateConfig } from "../services/documentsApi";
+
+const CERT_LABELS: Record<DocumentCertidaoTipo, string> = {
+  CNDT: "CNDT - TST",
+  CNF: "CNF - Tributos Federais e Dívida Ativa",
+  CRF: "CRF - FGTS",
+};
+
+function normalizeCnpj(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function formatCnpj(value: string): string {
+  const digits = normalizeCnpj(value).slice(0, 14);
+  return digits
+    .replace(/^(\d{2})(\d)/, "$1.$2")
+    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1/$2")
+    .replace(/(\d{4})(\d)/, "$1-$2");
+}
+
+function computeStatusLabel(status: DocumentCertidaoStatus): string {
+  if (status === "valida") return "Válida";
+  if (status === "vencendo") return "Vencendo";
+  if (status === "vencida") return "Vencida";
+  if (status === "falha") return "Falha";
+  return "Pendente";
+}
+
+function computeCertificateExpiryInfo(dateValue: string | null): string {
+  if (!dateValue) return "Validade do certificado não informada.";
+  const today = new Date();
+  const base = new Date(`${dateValue}T00:00:00`);
+  const diffDays = Math.floor((base.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return `Certificado vencido em ${base.toLocaleDateString("pt-BR")}.`;
+  if (diffDays <= 15) return `Certificado vence em ${diffDays} dia(s) (${base.toLocaleDateString("pt-BR")}).`;
+  return `Certificado válido até ${base.toLocaleDateString("pt-BR")} (${diffDays} dias restantes).`;
+}
+
+function computeCertificateExpiryTone(dateValue: string | null): "ok" | "warning" | "danger" | "neutral" {
+  if (!dateValue) return "neutral";
+  const today = new Date();
+  const base = new Date(`${dateValue}T00:00:00`);
+  const diffDays = Math.floor((base.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return "danger";
+  if (diffDays <= 15) return "warning";
+  return "ok";
+}
+
+function normalizeCertErrorMessage(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  try {
+    const parsed = JSON.parse(trimmed) as { errorMessage?: unknown; message?: unknown };
+    if (typeof parsed.errorMessage === "string" && parsed.errorMessage.trim()) return parsed.errorMessage.trim();
+    if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message.trim();
+  } catch {
+    // segue como texto puro
+  }
+  return trimmed;
+}
+
+export function DocumentosPage() {
+  const [activeTab, setActiveTab] = useState<"certidoes" | "biblioteca">("certidoes");
+  const [isConfigModalOpen, setIsConfigModalOpen] = useState(false);
+  const [cnpj, setCnpj] = useState("");
+  const [certificateName, setCertificateName] = useState("");
+  const [certificatePassword, setCertificatePassword] = useState("");
+  const [certificateExpiresAt, setCertificateExpiresAt] = useState("");
+  const [certificateBase64, setCertificateBase64] = useState<string>("");
+  const [certidoes, setCertidoes] = useState<DocumentCertidao[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const certificateExpiryInfo = useMemo(() => computeCertificateExpiryInfo(certificateExpiresAt || null), [certificateExpiresAt]);
+  const certificateExpiryTone = useMemo(() => computeCertificateExpiryTone(certificateExpiresAt || null), [certificateExpiresAt]);
+
+  const loadStatus = async (targetCnpj?: string) => {
+    const normalized = normalizeCnpj(targetCnpj ?? "");
+    if (targetCnpj && normalized.length !== 14) return;
+    setLoading(true);
+    try {
+      const data = await getCertidoesStatus(normalized || undefined);
+      setCertidoes(data.items);
+      if (data.config) {
+        setCnpj(formatCnpj(data.config.cnpj));
+        setCertificateName(data.config.certificateName ?? "");
+        setCertificateExpiresAt(data.config.certificateExpiresAt ?? "");
+      }
+      setMessage("");
+    } catch {
+      setMessage("Falha ao carregar certidões.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadStatus();
+  }, []);
+
+  const onCertificateFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setCertificateName(file.name);
+    const toBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : "";
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("Falha ao ler certificado."));
+      reader.readAsDataURL(file);
+    });
+    setCertificateBase64(toBase64);
+  };
+
+  const onSaveConfig = async () => {
+    const normalized = normalizeCnpj(cnpj);
+    if (normalized.length !== 14) {
+      setMessage("Informe um CNPJ válido com 14 dígitos.");
+      return;
+    }
+    setSavingConfig(true);
+    try {
+      const data = await saveCertificateConfig({
+        cnpj: normalized,
+        certificateName: certificateBase64 ? certificateName || undefined : undefined,
+        certificateContentBase64: certificateBase64 || undefined,
+        certificatePassword: certificateBase64 ? certificatePassword || undefined : undefined,
+      });
+      setCertidoes(data.items);
+      if (data.config) {
+        setCnpj(formatCnpj(data.config.cnpj));
+        setCertificateName(data.config.certificateName ?? "");
+        setCertificateExpiresAt(data.config.certificateExpiresAt ?? "");
+      }
+      setCertificatePassword("");
+      setCertificateBase64("");
+      setIsConfigModalOpen(false);
+      setMessage("Configuração de certificado salva.");
+    } catch {
+      setMessage("Falha ao salvar configuração do certificado.");
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const onRefresh = async (certTypes?: DocumentCertidaoTipo[]) => {
+    const normalized = normalizeCnpj(cnpj);
+    if (normalized.length !== 14) {
+      setMessage("Informe um CNPJ válido para atualizar as certidões.");
+      return;
+    }
+    setRefreshing(true);
+    try {
+      const data = await refreshCertidoes({ cnpj: normalized, certTypes });
+      setCertidoes(data.items);
+      setMessage("Atualização das certidões concluída.");
+    } catch {
+      setMessage("Falha ao atualizar certidões.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  return (
+    <div className="financeiro-page">
+      <section className="card">
+        <div className="section-header-row">
+          <h2>Documentos</h2>
+          <div className="row">
+            <button type="button" className={`nav-tab ${activeTab === "certidoes" ? "active" : ""}`} onClick={() => setActiveTab("certidoes")}>
+              Certidões
+            </button>
+            <button type="button" className={`nav-tab ${activeTab === "biblioteca" ? "active" : ""}`} onClick={() => setActiveTab("biblioteca")}>
+              Biblioteca
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {activeTab === "certidoes" ? (
+        <>
+          <section className="card">
+            <div className="section-header-row">
+              <h3>Certidões monitoradas</h3>
+              <div className="row">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => setIsConfigModalOpen(true)}
+                >
+                  Adicionar Certificado
+                </button>
+                <span className={`cert-expiry-badge cert-expiry-badge-${certificateExpiryTone}`}>
+                  {certificateExpiresAt ? certificateExpiryInfo : "Sem certificado cadastrado."}
+                </span>
+                <button type="button" className="primary-button" onClick={() => void onRefresh()} disabled={refreshing || loading}>
+                  {refreshing ? "Atualizando..." : "Atualizar todas"}
+                </button>
+              </div>
+            </div>
+            <table className="transaction-data-table">
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Status</th>
+                  <th>Emissão</th>
+                  <th>Validade</th>
+                  <th>Última verificação</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={6}>Carregando certidões...</td>
+                  </tr>
+                ) : certidoes.length === 0 ? (
+                  <tr>
+                    <td colSpan={6}>Informe o CNPJ para carregar as certidões.</td>
+                  </tr>
+                ) : (
+                  certidoes.map((item) => (
+                    <tr key={`cert-${item.certType}`}>
+                      <td>{CERT_LABELS[item.certType]}</td>
+                      <td>{computeStatusLabel(item.status)}</td>
+                      <td>{item.issueDate ? new Date(`${item.issueDate}T00:00:00`).toLocaleDateString("pt-BR") : "-"}</td>
+                      <td>{item.expiryDate ? new Date(`${item.expiryDate}T00:00:00`).toLocaleDateString("pt-BR") : "-"}</td>
+                      <td>{item.lastCheckedAt ? new Date(item.lastCheckedAt).toLocaleString("pt-BR") : "-"}</td>
+                      <td>
+                        <div className="row">
+                          <button type="button" className="transaction-icon-button" onClick={() => void onRefresh([item.certType])}>
+                            Atualizar
+                          </button>
+                          <button
+                            type="button"
+                            className="transaction-icon-button"
+                            onClick={() => void downloadCertidao(normalizeCnpj(cnpj), item.certType)}
+                            disabled={!item.storagePath}
+                          >
+                            Baixar
+                          </button>
+                        </div>
+                        {item.lastError ? <small className="error-text">{normalizeCertErrorMessage(item.lastError)}</small> : null}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </section>
+        </>
+      ) : (
+        <section className="card">
+          <div className="section-header-row">
+            <h3>Biblioteca</h3>
+          </div>
+          <p className="section-subtitle">Submódulo de biblioteca de documentos será integrado na próxima etapa.</p>
+        </section>
+      )}
+
+      {isConfigModalOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h2>Adicionar Certificado</h2>
+              <button type="button" onClick={() => setIsConfigModalOpen(false)}>
+                X
+              </button>
+            </div>
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onSaveConfig();
+              }}
+            >
+              <label>
+                CNPJ
+                <input
+                  value={formatCnpj(cnpj)}
+                  onChange={(event) => setCnpj(event.target.value)}
+                  placeholder="00.000.000/0000-00"
+                  required
+                />
+              </label>
+              <label>
+                Certificado digital
+                <input type="file" accept=".pfx,.p12,.pem,.crt" onChange={(event) => void onCertificateFileChange(event)} />
+              </label>
+              <label>
+                Senha do certificado
+                <input type="password" value={certificatePassword} onChange={(event) => setCertificatePassword(event.target.value)} />
+              </label>
+              <small className="muted-text">
+                {certificateExpiresAt
+                  ? `Validade atual: ${certificateExpiryInfo}`
+                  : "A validade será lida automaticamente do certificado enviado."}
+              </small>
+              <div className="modal-actions">
+                <button type="submit" className="primary-button" disabled={savingConfig}>
+                  {savingConfig ? "Salvando..." : "Salvar configuração"}
+                </button>
+                <button type="button" onClick={() => setIsConfigModalOpen(false)} disabled={savingConfig}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {message ? <p className="copy-feedback">{message}</p> : null}
+    </div>
+  );
+}

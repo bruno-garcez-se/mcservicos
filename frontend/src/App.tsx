@@ -20,11 +20,17 @@ const EmprestimosPage = lazy(() =>
 const TransacionalPage = lazy(() =>
   import("./pages/TransacionalPage").then((module) => ({ default: module.TransacionalPage })),
 );
+const FinanceiroPage = lazy(() =>
+  import("./pages/FinanceiroPage").then((module) => ({ default: module.FinanceiroPage })),
+);
 const ContatosPage = lazy(() =>
   import("./pages/ContatosPage").then((module) => ({ default: module.ContatosPage })),
 );
+const DocumentosPage = lazy(() =>
+  import("./pages/DocumentosPage").then((module) => ({ default: module.DocumentosPage })),
+);
 
-type Tab = "senhas" | "transacional" | "negocial" | "contatos" | "usuarios";
+type Tab = "senhas" | "transacional" | "financeiro" | "negocial" | "contatos" | "documentos" | "usuarios";
 const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
 const VPN_FEEDBACK_EVENT = "mc:vpn-feedback";
 
@@ -63,10 +69,32 @@ function FunnelIcon() {
   );
 }
 
+function FinanceIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 6a1 1 0 0 1 1-1h16a1 1 0 1 1 0 2H4a1 1 0 0 1-1-1Zm3 6a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H7a1 1 0 0 1-1-1Zm-2 6a1 1 0 0 1 1-1h14a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"
+      />
+    </svg>
+  );
+}
+
 function ContactsIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
       <path fill="currentColor" d="M7.2 3a2.2 2.2 0 0 0-2.1 2.7c1.2 5.3 5.9 10 11.2 11.2a2.2 2.2 0 0 0 2.7-2.1v-2a1.2 1.2 0 0 0-1-1.2l-2.7-.6a1.2 1.2 0 0 0-1.2.5l-.8 1.1a8.9 8.9 0 0 1-3.8-3.8l1.1-.8a1.2 1.2 0 0 0 .5-1.2L10.4 4a1.2 1.2 0 0 0-1.2-1h-2Z" />
+    </svg>
+  );
+}
+
+function DocumentsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M7 2a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.4a2 2 0 0 0-.6-1.42l-3.4-3.4A2 2 0 0 0 13.58 3H7Zm6 1.6a.4.4 0 0 1 .28.12l3 3a.4.4 0 0 1 .12.28H14a1 1 0 0 1-1-1V3.6ZM8 11a1 1 0 1 1 0-2h8a1 1 0 1 1 0 2H8Zm0 4a1 1 0 1 1 0-2h8a1 1 0 1 1 0 2H8Zm0 4a1 1 0 1 1 0-2h5a1 1 0 1 1 0 2H8Z"
+      />
     </svg>
   );
 }
@@ -120,7 +148,15 @@ export default function App() {
   const [tab, setTab] = useState<Tab>(() => {
     try {
       const saved = localStorage.getItem("portal:active-tab");
-      if (saved === "senhas" || saved === "transacional" || saved === "negocial" || saved === "contatos" || saved === "usuarios") {
+      if (
+        saved === "senhas" ||
+        saved === "transacional" ||
+        saved === "financeiro" ||
+        saved === "negocial" ||
+        saved === "contatos" ||
+        saved === "documentos" ||
+        saved === "usuarios"
+      ) {
         return saved;
       }
     } catch {
@@ -203,23 +239,25 @@ export default function App() {
   useEffect(() => {
     const tabAllowed =
       tab === "contatos" ||
+      tab === "documentos" ||
       tab === "usuarios" ||
       (tab === "senhas" && canViewSenhas) ||
       (tab === "transacional" && canViewTransacional) ||
+      tab === "financeiro" ||
       (tab === "negocial" && canViewNegocial);
     if (isAdmin && tabAllowed) return;
     if (!isAdmin && tab === "usuarios") {
       if (canViewSenhas) setTab("senhas");
       else if (canViewTransacional) setTab("transacional");
       else if (canViewNegocial) setTab("negocial");
-      else setTab("contatos");
+      else setTab("financeiro");
       return;
     }
     if (!tabAllowed) {
       if (canViewSenhas) setTab("senhas");
       else if (canViewTransacional) setTab("transacional");
       else if (canViewNegocial) setTab("negocial");
-      else setTab("contatos");
+      else setTab("financeiro");
     }
   }, [isAdmin, tab, canViewSenhas, canViewTransacional, canViewNegocial]);
 
@@ -633,6 +671,26 @@ export default function App() {
           ) : null}
           <button
             type="button"
+            onClick={() => setTab("financeiro")}
+            className={`nav-tab ${tab === "financeiro" ? "active" : ""}`}
+          >
+            <span className="nav-tab-icon-label">
+              <FinanceIcon />
+              <span>Financeiro</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("documentos")}
+            className={`nav-tab ${tab === "documentos" ? "active" : ""}`}
+          >
+            <span className="nav-tab-icon-label">
+              <DocumentsIcon />
+              <span>Documentos</span>
+            </span>
+          </button>
+          <button
+            type="button"
             onClick={() => setTab("contatos")}
             className={`nav-tab ${tab === "contatos" ? "active" : ""}`}
           >
@@ -748,8 +806,10 @@ export default function App() {
         <Suspense fallback={<p className="screen-center">Carregando módulo...</p>}>
           {tab === "senhas" && canViewSenhas ? <SenhasPage /> : null}
           {tab === "transacional" && canViewTransacional ? <TransacionalPage /> : null}
+          {tab === "financeiro" ? <FinanceiroPage /> : null}
           {tab === "negocial" && canViewNegocial ? <EmprestimosPage /> : null}
           {tab === "contatos" ? <ContatosPage /> : null}
+          {tab === "documentos" ? <DocumentosPage /> : null}
           {tab === "usuarios" && isAdmin ? <UsersPage /> : null}
         </Suspense>
       </main>

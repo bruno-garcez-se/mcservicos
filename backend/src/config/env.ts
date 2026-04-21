@@ -21,6 +21,12 @@ const envSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(16),
   JWT_REFRESH_SECRET: z.string().min(16),
   CREDENTIAL_ENCRYPTION_KEY: z.string().min(32),
+  CERTIDOES_INFOSIMPLES_TOKEN: z.string().optional(),
+  CERTIDOES_MOCK_MODE: z.enum(["true", "false"]).optional(),
+  CERTIDOES_FORCE_RUNNER: z.enum(["backend", "agent"]).optional(),
+  CERTIDOES_EXPIRING_WINDOW_DAYS: z.coerce.number().optional(),
+  CERTIDOES_SCHEDULER_INTERVAL_MS: z.coerce.number().optional(),
+  CERTIDOES_PLAYWRIGHT_TIMEOUT_MS: z.coerce.number().optional(),
 });
 
 export const env = envSchema.parse(process.env);

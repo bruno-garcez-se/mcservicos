@@ -191,6 +191,120 @@ ALTER COLUMN terminal_id SET NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_transaction_daily_day_date ON transaction_daily(day_date);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transaction_daily_terminal_day ON transaction_daily(terminal_id, day_date);
 
+CREATE TABLE IF NOT EXISTS financial_entries (
+  id SERIAL PRIMARY KEY,
+  entry_type TEXT NOT NULL CHECK (entry_type IN ('receita', 'despesa')),
+  description TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+  entry_date DATE NOT NULL,
+  due_date DATE,
+  reference_month DATE,
+  paid_at TIMESTAMPTZ,
+  paid_amount NUMERIC(14,2),
+  template_id INT,
+  notes TEXT NOT NULL DEFAULT '',
+  created_by INT REFERENCES users(id),
+  updated_by INT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_financial_entries_date ON financial_entries(entry_date DESC);
+CREATE INDEX IF NOT EXISTS idx_financial_entries_type ON financial_entries(entry_type);
+CREATE INDEX IF NOT EXISTS idx_financial_entries_due_date ON financial_entries(due_date);
+CREATE INDEX IF NOT EXISTS idx_financial_entries_reference_month ON financial_entries(reference_month);
+
+CREATE TABLE IF NOT EXISTS financial_expense_templates (
+  id SERIAL PRIMARY KEY,
+  description TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT '',
+  default_amount NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK (default_amount >= 0),
+  due_day INT NOT NULL CHECK (due_day BETWEEN 1 AND 31),
+  is_variable BOOLEAN NOT NULL DEFAULT FALSE,
+  active BOOLEAN NOT NULL DEFAULT TRUE,
+  notes TEXT NOT NULL DEFAULT '',
+  created_by INT REFERENCES users(id),
+  updated_by INT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE financial_entries
+ADD COLUMN IF NOT EXISTS due_date DATE;
+
+ALTER TABLE financial_entries
+ADD COLUMN IF NOT EXISTS reference_month DATE;
+
+ALTER TABLE financial_entries
+ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+
+ALTER TABLE financial_entries
+ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(14,2);
+
+ALTER TABLE financial_entries
+ADD COLUMN IF NOT EXISTS template_id INT;
+
+ALTER TABLE financial_entries
+DROP CONSTRAINT IF EXISTS financial_entries_template_fk;
+
+ALTER TABLE financial_entries
+ADD CONSTRAINT financial_entries_template_fk
+FOREIGN KEY (template_id) REFERENCES financial_expense_templates(id) ON DELETE SET NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_financial_entries_template_month
+ON financial_entries(template_id, reference_month)
+WHERE template_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS documents_certificate_config (
+  id SERIAL PRIMARY KEY,
+  cnpj TEXT NOT NULL UNIQUE,
+  runner_mode TEXT NOT NULL DEFAULT 'backend' CHECK (runner_mode IN ('backend', 'agent')),
+  certificate_name TEXT,
+  certificate_content_base64 TEXT,
+  certificate_password TEXT,
+  certificate_expires_at DATE,
+  certificate_updated_at TIMESTAMPTZ,
+  created_by INT REFERENCES users(id),
+  updated_by INT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS documents_certidoes (
+  id SERIAL PRIMARY KEY,
+  cnpj TEXT NOT NULL,
+  cert_type TEXT NOT NULL CHECK (cert_type IN ('CNDT', 'CNF', 'CRF')),
+  status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('valida', 'vencendo', 'vencida', 'pendente', 'falha')),
+  issue_date DATE,
+  expiry_date DATE,
+  control_code TEXT,
+  source_url TEXT,
+  storage_path TEXT,
+  file_hash TEXT,
+  last_checked_at TIMESTAMPTZ,
+  last_success_at TIMESTAMPTZ,
+  last_error TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (cnpj, cert_type)
+);
+
+CREATE TABLE IF NOT EXISTS documents_certidoes_runs (
+  id SERIAL PRIMARY KEY,
+  cnpj TEXT NOT NULL,
+  cert_type TEXT NOT NULL CHECK (cert_type IN ('CNDT', 'CNF', 'CRF')),
+  runner_mode TEXT NOT NULL CHECK (runner_mode IN ('backend', 'agent')),
+  status TEXT NOT NULL CHECK (status IN ('success', 'failure')),
+  message TEXT,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ NOT NULL,
+  created_by INT REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_certidoes_status ON documents_certidoes(status);
+CREATE INDEX IF NOT EXISTS idx_documents_certidoes_expiry ON documents_certidoes(expiry_date);
+CREATE INDEX IF NOT EXISTS idx_documents_certidoes_checked ON documents_certidoes(last_checked_at);
+
 CREATE TABLE IF NOT EXISTS loan_interactions (
   id SERIAL PRIMARY KEY,
   client_id INT NOT NULL REFERENCES loan_clients(id),
