@@ -60,6 +60,11 @@ function mapPlaywrightError(error: unknown): string {
   return `Falha na automação CRF: ${message}`;
 }
 
+function containsAny(text: string, needles: string[]): boolean {
+  const normalized = text.toLowerCase();
+  return needles.some((needle) => normalized.includes(needle.toLowerCase()));
+}
+
 function stringifyRaw(value: unknown): string {
   try {
     return JSON.stringify(value);
@@ -205,7 +210,7 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
     const response = await page.goto(
       "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
       {
-        waitUntil: "domcontentloaded",
+        waitUntil: "networkidle",
         timeout: timeoutMs,
       },
     );
@@ -228,40 +233,33 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
         sourceUrl: page.url(),
       };
     }
-    const controlsCount = await page.locator("input,select,button").count();
-    if (controlsCount < 3) {
-      return {
-        ok: false,
-        errorMessage: "Portal CRF bloqueou a automação ou alterou o layout (controles indisponíveis).",
-        sourceUrl: page.url(),
-      };
+    const cnpjDigits = normalizeCnpjDigits(cnpj);
+    const selectInscriptionType = page.locator(
+      "select[id*='tipoInscricao'], select[name*='tipoInscricao'], select:has(option:text-is('CNPJ'))",
+    );
+    if ((await selectInscriptionType.count()) > 0) {
+      const select = selectInscriptionType.first();
+      try {
+        await select.selectOption({ label: "CNPJ" });
+      } catch {
+        // alguns ambientes já iniciam em CNPJ; ignora se não conseguir trocar
+      }
     }
 
-    const cnpjDigits = normalizeCnpjDigits(cnpj);
-    const filled = await page.evaluate((digits) => {
-      const inputs = Array.from(document.querySelectorAll("input"));
-      const target = inputs.find((input) => {
-        const key = `${input.id || ""} ${input.getAttribute("name") || ""} ${input.getAttribute("placeholder") || ""}`.toLowerCase();
-        return key.includes("cnpj") || key.includes("inscri") || key.includes("cei");
-      });
-      if (!target) return false;
-      target.focus();
-      target.value = "";
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.value = digits;
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
-    }, cnpjDigits);
-    if (!filled) {
+    const cnpjInput = page
+      .locator(
+        "input[id*='inscricao'], input[name*='inscricao'], input[placeholder*='Inscrição'], input[placeholder*='Inscricao']",
+      )
+      .first();
+    if ((await cnpjInput.count()) === 0) {
       return {
         ok: false,
         errorMessage: "Não foi possível localizar o campo de CNPJ no portal CRF (layout/bloqueio).",
         sourceUrl: page.url(),
       };
     }
+    await cnpjInput.fill(cnpjDigits);
 
-    // Tenta acionar o submit por botão textual e fallback por Enter no campo.
     const submitButton = page
       .locator("button, input[type='submit'], a")
       .filter({ hasText: /consultar|pesquisar|emitir|continuar/i })
@@ -272,42 +270,87 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
       await page.keyboard.press("Enter");
     }
 
-    await page.waitForTimeout(4500);
-    const pageText = await page.locator("body").innerText().catch(() => "");
-    const lower = pageText.toLowerCase();
+    await page.waitForTimeout(2500);
+    const initialResultText = await page.locator("body").innerText().catch(() => "");
+    const initialLower = initialResultText.toLowerCase();
     if (
-      lower.includes("captcha") ||
-      lower.includes("recaptcha") ||
-      lower.includes("acesso negado") ||
-      lower.includes("forbidden")
+      containsAny(initialLower, ["captcha", "recaptcha", "acesso negado", "forbidden", "shieldsquare"])
     ) {
       return {
         ok: false,
         errorMessage: "Portal CRF bloqueou a automação (captcha/antibot).",
-        rawText: pageText.slice(0, 6000),
+        rawText: initialResultText.slice(0, 6000),
       };
     }
     if (
-      lower.includes("não regular") ||
-      lower.includes("nao regular") ||
-      lower.includes("não foi possível localizar") ||
-      lower.includes("nao foi possivel localizar")
+      containsAny(initialLower, [
+        "não regular",
+        "nao regular",
+        "não foi possível localizar",
+        "nao foi possivel localizar",
+      ])
     ) {
       return {
         ok: false,
         errorMessage: "Empresa não regular ou CNPJ não localizado no CRF.",
-        rawText: pageText.slice(0, 6000),
+        rawText: initialResultText.slice(0, 6000),
       };
     }
 
+    const certLink = page
+      .locator("a")
+      .filter({ hasText: /Certificado de Regularidade do FGTS\s*-\s*CRF/i })
+      .first();
+    if ((await certLink.count()) === 0) {
+      return {
+        ok: false,
+        errorMessage: "Consulta CRF não retornou o link do certificado.",
+        rawText: initialResultText.slice(0, 6000),
+        sourceUrl: page.url(),
+      };
+    }
+
+    const popupPromise = context.waitForEvent("page", { timeout: 7000 }).catch(() => null);
+    await certLink.click({ timeout: 10000 });
+    const certPage = (await popupPromise) || page;
+    if (certPage !== page) {
+      await certPage.waitForLoadState("domcontentloaded", { timeout: timeoutMs }).catch(() => undefined);
+    }
+
+    const visualButton = certPage
+      .locator("a, button, input[type='submit']")
+      .filter({ hasText: /visualizar/i })
+      .first();
+    if ((await visualButton.count()) > 0) {
+      const viewPopupPromise = context.waitForEvent("page", { timeout: 7000 }).catch(() => null);
+      await visualButton.click({ timeout: 10000 }).catch(() => undefined);
+      const viewerPage = (await viewPopupPromise) || certPage;
+      if (viewerPage !== certPage) {
+        await viewerPage.waitForLoadState("domcontentloaded", { timeout: timeoutMs }).catch(() => undefined);
+      }
+      const pageText = await viewerPage.locator("body").innerText().catch(() => "");
+      const dates = extractDatesFromText(pageText);
+      const issueDate = toIsoDate(dates[0] ?? null);
+      const expiryDate = toIsoDate(dates[dates.length - 1] ?? null);
+      if (expiryDate) {
+        return {
+          ok: true,
+          issueDate,
+          expiryDate,
+          sourceUrl: viewerPage.url(),
+          rawText: pageText.slice(0, 10000),
+        };
+      }
+    }
+
+    const pageText = await certPage.locator("body").innerText().catch(() => "");
+    const lower = pageText.toLowerCase();
     const dates = extractDatesFromText(pageText);
     const issueDate = toIsoDate(dates[0] ?? null);
     const expiryDate = toIsoDate(dates[dates.length - 1] ?? null);
     if (!expiryDate) {
       const looksLikeInitialPage =
-        lower.includes("critérios de pesquisa") ||
-        lower.includes("criterios de pesquisa") ||
-        lower.includes("consulta regularidade do empregador");
+        containsAny(lower, ["critérios de pesquisa", "criterios de pesquisa", "consulta regularidade do empregador"]);
       return {
         ok: false,
         errorMessage: looksLikeInitialPage
