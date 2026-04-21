@@ -24,6 +24,7 @@ const envSchema = z.object({
   CERTIDOES_INFOSIMPLES_TOKEN: z.string().optional(),
   CERTIDOES_MOCK_MODE: z.enum(["true", "false"]).optional(),
   CERTIDOES_FORCE_RUNNER: z.enum(["backend", "agent"]).optional(),
+  CERTIDOES_AUTO_REFRESH_ENABLED: z.enum(["true", "false"]).optional(),
   CERTIDOES_EXPIRING_WINDOW_DAYS: z.coerce.number().optional(),
   CERTIDOES_SCHEDULER_INTERVAL_MS: z.coerce.number().optional(),
   CERTIDOES_PLAYWRIGHT_TIMEOUT_MS: z.coerce.number().optional(),

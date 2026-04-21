@@ -390,6 +390,7 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
 export class BackendRunner implements CertidoesRunner {
   async execute(input: CertidoesRunnerInput): Promise<CertidaoProviderPayload> {
     const mockEnabled = process.env.CERTIDOES_MOCK_MODE === "true";
+    const hasInfosimplesToken = (process.env.CERTIDOES_INFOSIMPLES_TOKEN || "").trim().length > 0;
     if (mockEnabled) {
       const today = new Date();
       const expiry = new Date(today.getTime());
@@ -406,9 +407,13 @@ export class BackendRunner implements CertidoesRunner {
 
     try {
       if (input.certType === "CRF") {
+        if (hasInfosimplesToken) {
+          const providerPreferred = await fetchFromInfoSimples(input);
+          if (providerPreferred.ok) return providerPreferred;
+        }
         const crfByPlaywright = await fetchCrfWithPlaywright(input.cnpj);
         if (crfByPlaywright.ok) return crfByPlaywright;
-        if ((process.env.CERTIDOES_INFOSIMPLES_TOKEN || "").trim()) {
+        if (hasInfosimplesToken) {
           const providerFallback = await fetchFromInfoSimples(input);
           if (providerFallback.ok) return providerFallback;
         }

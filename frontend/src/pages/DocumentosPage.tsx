@@ -14,12 +14,6 @@ const CERT_LABELS: Record<DocumentCertidaoTipo, string> = {
   CRF: "CRF - FGTS",
 };
 
-const CERT_REFRESH_MODE: Record<DocumentCertidaoTipo, "manual" | "automatico"> = {
-  CNDT: "manual",
-  CNF: "manual",
-  CRF: "automatico",
-};
-
 const CERT_PORTAL_URL: Record<DocumentCertidaoTipo, string> = {
   CNDT: "https://cndt-certidao.tst.jus.br/inicio.faces",
   CNF: "https://solucoes.receita.fazenda.gov.br/Servicos/certidao/",
@@ -303,18 +297,12 @@ export function DocumentosPage() {
       setMessage("Informe um CNPJ válido para atualizar as certidões.");
       return;
     }
-    const onlyAutomatic =
-      certTypes?.filter((type) => CERT_REFRESH_MODE[type] === "automatico") ??
-      (["CRF"] as DocumentCertidaoTipo[]);
-    if (onlyAutomatic.length === 0) {
-      setMessage("CNDT e CNF são manuais. Apenas CRF possui atualização automática.");
-      return;
-    }
+    const targetTypes = certTypes && certTypes.length > 0 ? certTypes : undefined;
     setRefreshing(true);
     try {
-      const data = await refreshCertidoes({ cnpj: normalized, certTypes: onlyAutomatic });
+      const data = await refreshCertidoes({ cnpj: normalized, certTypes: targetTypes });
       setCertidoes(data.items);
-      setMessage("Atualização automática concluída (CRF). CNDT e CNF são manuais.");
+      setMessage("Atualização manual concluída. Créditos consumidos conforme as certidões consultadas.");
     } catch {
       setMessage("Falha ao atualizar certidões.");
     } finally {
@@ -355,12 +343,12 @@ export function DocumentosPage() {
                   {certificateExpiresAt ? certificateExpiryInfo : "Sem certificado cadastrado."}
                 </span>
                 <button type="button" className="primary-button" onClick={() => void onRefresh()} disabled={refreshing || loading}>
-                  {refreshing ? "Atualizando..." : "Atualizar automáticas"}
+                  {refreshing ? "Atualizando..." : "Atualizar agora"}
                 </button>
               </div>
             </div>
             <p className="documentos-refresh-note">
-              CNDT e CNF: geração manual pelo usuário. CRF (FGTS): atualização automática pelo sistema.
+              Atualização sob demanda: o sistema só consulta CNDT, CNF e CRF quando você clicar em atualizar (consome créditos).
             </p>
             <table className="transaction-data-table">
               <thead>
@@ -396,9 +384,8 @@ export function DocumentosPage() {
                             type="button"
                             className="transaction-icon-button"
                             onClick={() => void onRefresh([item.certType])}
-                            disabled={CERT_REFRESH_MODE[item.certType] !== "automatico"}
                           >
-                            {CERT_REFRESH_MODE[item.certType] === "automatico" ? "Atualizar" : "Manual"}
+                            Atualizar
                           </button>
                           <button
                             type="button"
@@ -418,9 +405,6 @@ export function DocumentosPage() {
                             <RegisterIcon />
                           </button>
                         </div>
-                        {CERT_REFRESH_MODE[item.certType] === "manual" ? (
-                          <small className="documentos-manual-note">Emissão/renovação manual.</small>
-                        ) : null}
                         {item.lastError ? <small className="error-text">{normalizeCertErrorMessage(item.lastError)}</small> : null}
                         {item.certType === "CRF" && isCrfPortalBlockedError(item.lastError) ? (
                           <button
