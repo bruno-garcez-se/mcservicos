@@ -20,6 +20,28 @@ const CERT_REFRESH_MODE: Record<DocumentCertidaoTipo, "manual" | "automatico"> =
   CRF: "automatico",
 };
 
+function RegisterIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M5.5 3h8.8l4.2 4.2V20a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Zm8.3 1.9V8h3.1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 10.3v7.4M8.3 14h7.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function todayIsoDate(): string {
   const now = new Date();
   const y = now.getFullYear();
@@ -358,8 +380,14 @@ export function DocumentosPage() {
                           >
                             Baixar
                           </button>
-                          <button type="button" className="transaction-icon-button" onClick={() => openManualModal(item.certType)}>
-                            Registrar
+                          <button
+                            type="button"
+                            className="transaction-icon-button"
+                            onClick={() => openManualModal(item.certType)}
+                            aria-label="Registrar manualmente"
+                            title="Registrar manualmente"
+                          >
+                            <RegisterIcon />
                           </button>
                         </div>
                         {CERT_REFRESH_MODE[item.certType] === "manual" ? (

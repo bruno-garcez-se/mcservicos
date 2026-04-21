@@ -3363,6 +3363,12 @@ textarea {
   padding: 0;
 }
 
+.transaction-icon-button svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 .transaction-icon-button:hover {
   background: #eaf2ff;
   border-color: #a9c6e8;
