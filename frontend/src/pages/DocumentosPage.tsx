@@ -1260,7 +1260,7 @@ export function DocumentosPage() {
                             className="transaction-icon-button"
                             onClick={() =>
                               void withDownloadFeedback(
-                                () => downloadCertidao(resolveDownloadCnpj(cnpj, item.cnpj), item.certType),
+                                () => downloadCertidao(resolveDownloadCnpj(cnpj), item.certType),
                                 "Falha ao baixar certidão.",
                               )
                             }
