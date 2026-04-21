@@ -20,6 +20,12 @@ const CERT_REFRESH_MODE: Record<DocumentCertidaoTipo, "manual" | "automatico"> =
   CRF: "automatico",
 };
 
+const CERT_PORTAL_URL: Record<DocumentCertidaoTipo, string> = {
+  CNDT: "https://cndt-certidao.tst.jus.br/inicio.faces",
+  CNF: "https://solucoes.receita.fazenda.gov.br/Servicos/certidao/",
+  CRF: "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
+};
+
 function RegisterIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -110,6 +116,18 @@ function normalizeCertErrorMessage(raw: string): string {
     // segue como texto puro
   }
   return trimmed;
+}
+
+function isCrfPortalBlockedError(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  return (
+    normalized.includes("portal crf indisponível no momento (http 403)") ||
+    normalized.includes("portal crf bloqueou a automação") ||
+    normalized.includes("portal crf bloqueou a automacao") ||
+    normalized.includes("shieldsquare") ||
+    normalized.includes("captcha")
+  );
 }
 
 export function DocumentosPage() {
@@ -235,6 +253,16 @@ export function DocumentosPage() {
       setMessage("Falha ao registrar certidão manual.");
     } finally {
       setManualSaving(false);
+    }
+  };
+
+  const onContinueInPortal = (certType: DocumentCertidaoTipo) => {
+    const url = CERT_PORTAL_URL[certType];
+    window.open(url, "_blank", "noopener,noreferrer");
+    if (certType === "CRF") {
+      setMessage("Portal do CRF aberto. Após emitir, use Registrar para lançar a certidão manualmente.");
+    } else {
+      setMessage(`Portal de ${certType} aberto. Após emitir, use Registrar para lançar a certidão manualmente.`);
     }
   };
 
@@ -394,6 +422,15 @@ export function DocumentosPage() {
                           <small className="documentos-manual-note">Emissão/renovação manual.</small>
                         ) : null}
                         {item.lastError ? <small className="error-text">{normalizeCertErrorMessage(item.lastError)}</small> : null}
+                        {item.certType === "CRF" && isCrfPortalBlockedError(item.lastError) ? (
+                          <button
+                            type="button"
+                            className="documentos-portal-button"
+                            onClick={() => onContinueInPortal(item.certType)}
+                          >
+                            Continuar no portal
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   ))
