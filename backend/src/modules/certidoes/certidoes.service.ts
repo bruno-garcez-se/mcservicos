@@ -417,6 +417,63 @@ export async function refreshCertidoes(input: {
   }
 }
 
+export async function upsertManualCertidao(input: {
+  cnpj: string;
+  certType: CertidaoTipo;
+  issueDate?: string | null;
+  expiryDate: string;
+  controlCode?: string | null;
+  sourceUrl?: string | null;
+  pdfBase64?: string | null;
+  userId: number;
+}): Promise<void> {
+  await ensureCertidoesStructures();
+  const cnpj = normalizeCnpj(input.cnpj);
+  await ensureCertRows(cnpj);
+
+  let storagePath: string | null = null;
+  let fileHash: string | null = null;
+  if (input.pdfBase64?.trim()) {
+    const stored = await savePdf(cnpj, input.certType, input.pdfBase64.trim());
+    storagePath = stored.storagePath;
+    fileHash = stored.fileHash;
+  }
+
+  const status = computeStatusByExpiry(input.expiryDate);
+  await pool.query(
+    `UPDATE documents_certidoes
+     SET status = $3,
+         issue_date = $4::date,
+         expiry_date = $5::date,
+         control_code = $6,
+         source_url = $7,
+         storage_path = COALESCE($8, storage_path),
+         file_hash = COALESCE($9, file_hash),
+         last_checked_at = NOW(),
+         last_success_at = NOW(),
+         last_error = NULL,
+         updated_at = NOW()
+     WHERE cnpj = $1 AND cert_type = $2`,
+    [
+      cnpj,
+      input.certType,
+      status,
+      input.issueDate ?? null,
+      input.expiryDate,
+      input.controlCode ?? null,
+      input.sourceUrl ?? "manual://usuario",
+      storagePath,
+      fileHash,
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO documents_certidoes_runs (cnpj, cert_type, runner_mode, status, message, started_at, finished_at, created_by)
+     VALUES ($1, $2, 'backend', 'success', $3, NOW(), NOW(), $4)`,
+    [cnpj, input.certType, "Certidão registrada manualmente.", input.userId],
+  );
+}
+
 export async function autoRefreshExpiringCertidoes(): Promise<void> {
   await ensureCertidoesStructures();
   const configs = await pool.query<{ cnpj: string }>(`SELECT cnpj FROM documents_certificate_config`);

@@ -6,6 +6,7 @@ import {
   getCertidoesStatus,
   getDefaultCnpj,
   refreshCertidoes,
+  upsertManualCertidao,
   upsertCertificateConfig,
 } from "./certidoes.service";
 
@@ -70,6 +71,34 @@ certidoesRouter.post("/refresh", async (req, res) => {
   });
   const data = await getCertidoesStatus(payload.cnpj);
   res.json(data);
+});
+
+certidoesRouter.post("/manual", async (req, res) => {
+  const user = req.user!;
+  const payload = z
+    .object({
+      cnpj: z.string().min(14),
+      certType: certTypeSchema,
+      issueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      controlCode: z.string().max(180).optional(),
+      sourceUrl: z.string().url().optional(),
+      pdfBase64: z.string().max(20_000_000).optional(),
+    })
+    .parse(req.body ?? {});
+
+  await upsertManualCertidao({
+    cnpj: payload.cnpj,
+    certType: payload.certType,
+    issueDate: payload.issueDate,
+    expiryDate: payload.expiryDate,
+    controlCode: payload.controlCode,
+    sourceUrl: payload.sourceUrl,
+    pdfBase64: payload.pdfBase64,
+    userId: user.id,
+  });
+  const data = await getCertidoesStatus(payload.cnpj);
+  res.status(201).json(data);
 });
 
 certidoesRouter.get("/:tipo/download", async (req, res) => {

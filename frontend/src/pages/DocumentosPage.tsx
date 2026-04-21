@@ -1,6 +1,12 @@
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { DocumentCertidao, DocumentCertidaoStatus, DocumentCertidaoTipo } from "../types";
-import { downloadCertidao, getCertidoesStatus, refreshCertidoes, saveCertificateConfig } from "../services/documentsApi";
+import {
+  downloadCertidao,
+  getCertidoesStatus,
+  refreshCertidoes,
+  registerManualCertidao,
+  saveCertificateConfig,
+} from "../services/documentsApi";
 
 const CERT_LABELS: Record<DocumentCertidaoTipo, string> = {
   CNDT: "CNDT - TST",
@@ -13,6 +19,14 @@ const CERT_REFRESH_MODE: Record<DocumentCertidaoTipo, "manual" | "automatico"> =
   CNF: "manual",
   CRF: "automatico",
 };
+
+function todayIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 function normalizeCnpj(value: string): string {
   return value.replace(/\D/g, "");
@@ -88,6 +102,15 @@ export function DocumentosPage() {
   const [loading, setLoading] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [manualCertType, setManualCertType] = useState<DocumentCertidaoTipo>("CRF");
+  const [manualIssueDate, setManualIssueDate] = useState(todayIsoDate());
+  const [manualExpiryDate, setManualExpiryDate] = useState("");
+  const [manualControlCode, setManualControlCode] = useState("");
+  const [manualSourceUrl, setManualSourceUrl] = useState("");
+  const [manualPdfName, setManualPdfName] = useState("");
+  const [manualPdfBase64, setManualPdfBase64] = useState("");
+  const [manualSaving, setManualSaving] = useState(false);
   const [message, setMessage] = useState("");
 
   const certificateExpiryInfo = useMemo(() => computeCertificateExpiryInfo(certificateExpiresAt || null), [certificateExpiresAt]);
@@ -132,6 +155,65 @@ export function DocumentosPage() {
       reader.readAsDataURL(file);
     });
     setCertificateBase64(toBase64);
+  };
+
+  const onManualPdfChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setManualPdfName(file.name);
+    const toBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : "";
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("Falha ao ler PDF."));
+      reader.readAsDataURL(file);
+    });
+    setManualPdfBase64(toBase64);
+  };
+
+  const openManualModal = (certType: DocumentCertidaoTipo) => {
+    setManualCertType(certType);
+    setManualIssueDate(todayIsoDate());
+    setManualExpiryDate("");
+    setManualControlCode("");
+    setManualSourceUrl("");
+    setManualPdfName("");
+    setManualPdfBase64("");
+    setManualModalOpen(true);
+  };
+
+  const onSaveManual = async () => {
+    const normalized = normalizeCnpj(cnpj);
+    if (normalized.length !== 14) {
+      setMessage("Informe um CNPJ válido para registrar manualmente.");
+      return;
+    }
+    if (!manualExpiryDate) {
+      setMessage("Informe a validade da certidão manual.");
+      return;
+    }
+    setManualSaving(true);
+    try {
+      const data = await registerManualCertidao({
+        cnpj: normalized,
+        certType: manualCertType,
+        issueDate: manualIssueDate || undefined,
+        expiryDate: manualExpiryDate,
+        controlCode: manualControlCode || undefined,
+        sourceUrl: manualSourceUrl || undefined,
+        pdfBase64: manualPdfBase64 || undefined,
+      });
+      setCertidoes(data.items);
+      setManualModalOpen(false);
+      setMessage(`${CERT_LABELS[manualCertType]} registrada manualmente com sucesso.`);
+    } catch {
+      setMessage("Falha ao registrar certidão manual.");
+    } finally {
+      setManualSaving(false);
+    }
   };
 
   const onSaveConfig = async () => {
@@ -276,6 +358,9 @@ export function DocumentosPage() {
                           >
                             Baixar
                           </button>
+                          <button type="button" className="transaction-icon-button" onClick={() => openManualModal(item.certType)}>
+                            Registrar
+                          </button>
                         </div>
                         {CERT_REFRESH_MODE[item.certType] === "manual" ? (
                           <small className="documentos-manual-note">Emissão/renovação manual.</small>
@@ -341,6 +426,60 @@ export function DocumentosPage() {
                   {savingConfig ? "Salvando..." : "Salvar configuração"}
                 </button>
                 <button type="button" onClick={() => setIsConfigModalOpen(false)} disabled={savingConfig}>
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {manualModalOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h2>Registrar manualmente</h2>
+              <button type="button" onClick={() => setManualModalOpen(false)}>
+                X
+              </button>
+            </div>
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onSaveManual();
+              }}
+            >
+              <label>
+                Tipo
+                <input value={CERT_LABELS[manualCertType]} disabled />
+              </label>
+              <label>
+                Emissão
+                <input type="date" value={manualIssueDate} onChange={(event) => setManualIssueDate(event.target.value)} />
+              </label>
+              <label>
+                Validade
+                <input type="date" value={manualExpiryDate} onChange={(event) => setManualExpiryDate(event.target.value)} required />
+              </label>
+              <label>
+                Código de controle (opcional)
+                <input value={manualControlCode} onChange={(event) => setManualControlCode(event.target.value)} />
+              </label>
+              <label>
+                URL da certidão (opcional)
+                <input value={manualSourceUrl} onChange={(event) => setManualSourceUrl(event.target.value)} placeholder="https://..." />
+              </label>
+              <label>
+                PDF da certidão (opcional)
+                <input type="file" accept="application/pdf,.pdf" onChange={(event) => void onManualPdfChange(event)} />
+              </label>
+              {manualPdfName ? <small className="muted-text">Arquivo selecionado: {manualPdfName}</small> : null}
+              <div className="modal-actions">
+                <button type="submit" className="primary-button" disabled={manualSaving}>
+                  {manualSaving ? "Salvando..." : "Salvar manual"}
+                </button>
+                <button type="button" onClick={() => setManualModalOpen(false)} disabled={manualSaving}>
                   Cancelar
                 </button>
               </div>
