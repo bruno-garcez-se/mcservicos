@@ -75,6 +75,45 @@ CREATE TABLE IF NOT EXISTS credential_groups (
   PRIMARY KEY (credential_id, group_id)
 );
 
+INSERT INTO groups (name)
+VALUES ('Gerente'), ('Atendente')
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO user_groups (user_id, group_id)
+SELECT ug.user_id, g_new.id
+FROM user_groups ug
+JOIN groups g_old ON g_old.id = ug.group_id
+JOIN groups g_new ON g_new.name = 'Gerente'
+WHERE g_old.name = 'Financeiro'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO user_groups (user_id, group_id)
+SELECT ug.user_id, g_new.id
+FROM user_groups ug
+JOIN groups g_old ON g_old.id = ug.group_id
+JOIN groups g_new ON g_new.name = 'Atendente'
+WHERE g_old.name = 'RH'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO credential_groups (credential_id, group_id)
+SELECT cg.credential_id, g_new.id
+FROM credential_groups cg
+JOIN groups g_old ON g_old.id = cg.group_id
+JOIN groups g_new ON g_new.name = 'Gerente'
+WHERE g_old.name = 'Financeiro'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO credential_groups (credential_id, group_id)
+SELECT cg.credential_id, g_new.id
+FROM credential_groups cg
+JOIN groups g_old ON g_old.id = cg.group_id
+JOIN groups g_new ON g_new.name = 'Atendente'
+WHERE g_old.name = 'RH'
+ON CONFLICT DO NOTHING;
+
+DELETE FROM groups
+WHERE name IN ('Financeiro', 'RH');
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id SERIAL PRIMARY KEY,
   actor_user_id INT REFERENCES users(id),

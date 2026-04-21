@@ -2,12 +2,19 @@ import { createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
 import forge from "node-forge";
+import { PDFDocument } from "pdf-lib";
 import { pool } from "../../db/pool";
 import {
   CertidaoRecord,
   CertidaoStatus,
   CertidaoTipo,
   CertificateConfigRecord,
+  MonthlyObligationRecord,
+  NfseDraftRecord,
+  NfseDraftStatus,
+  NfseTemplateKey,
+  MonthlyObligationType,
+  MonthlyUploadMode,
   RunnerMode,
 } from "./certidoes.types";
 import { CndtProvider } from "./providers/cndt.provider";
@@ -21,6 +28,8 @@ import { PDFParse } from "pdf-parse";
 const CERT_TYPES: CertidaoTipo[] = ["CNDT", "CNF", "CRF"];
 const EXPIRING_WINDOW_DAYS = Number(process.env.CERTIDOES_EXPIRING_WINDOW_DAYS || 7);
 const CERT_STORAGE_ROOT = path.resolve(process.cwd(), "storage", "certidoes");
+const MONTHLY_STORAGE_ROOT = path.resolve(process.cwd(), "storage", "documentos-mensais");
+const NFSE_STORAGE_ROOT = path.resolve(process.cwd(), "storage", "nfse");
 const AGENT_BASE_URL = (process.env.VPN_AGENT_URL || "http://127.0.0.1:48321").replace(/\/+$/, "");
 
 const providers = {
@@ -28,6 +37,15 @@ const providers = {
   CNF: new CnfProvider(),
   CRF: new CrfProvider(),
 } as const;
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 let structureEnsured = false;
 
@@ -157,9 +175,66 @@ async function ensureCertidoesStructures(): Promise<void> {
       created_by INT REFERENCES users(id)
     );
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS documents_monthly_obligations (
+      id SERIAL PRIMARY KEY,
+      cnpj TEXT NOT NULL,
+      obligation_type TEXT NOT NULL CHECK (obligation_type IN ('SIMPLES', 'FGTS')),
+      competency TEXT NOT NULL,
+      upload_mode TEXT NOT NULL DEFAULT 'single' CHECK (upload_mode IN ('single', 'separate')),
+      single_file_name TEXT,
+      single_storage_path TEXT,
+      single_file_hash TEXT,
+      boleto_file_name TEXT,
+      boleto_storage_path TEXT,
+      boleto_file_hash TEXT,
+      receipt_file_name TEXT,
+      receipt_storage_path TEXT,
+      receipt_file_hash TEXT,
+      updated_by INT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (cnpj, obligation_type, competency)
+    );
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS documents_nfse_drafts (
+      id SERIAL PRIMARY KEY,
+      cnpj TEXT NOT NULL,
+      template_key TEXT NOT NULL CHECK (template_key IN ('DIA_5_RETIDO', 'DIA_20_SEM_RETENCAO')),
+      competency TEXT NOT NULL DEFAULT '',
+      tomador_label TEXT NOT NULL,
+      iss_mode TEXT NOT NULL,
+      reference_day INT NOT NULL CHECK (reference_day IN (5, 20)),
+      service_description TEXT NOT NULL,
+      amount NUMERIC(14, 2) NOT NULL CHECK (amount > 0),
+      status TEXT NOT NULL DEFAULT 'preparada' CHECK (status IN ('preparada', 'emitida')),
+      invoice_number TEXT,
+      verification_code TEXT,
+      emitted_at TIMESTAMPTZ,
+      xml_file_name TEXT,
+      xml_storage_path TEXT,
+      pdf_file_name TEXT,
+      pdf_storage_path TEXT,
+      created_by INT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS competency TEXT NOT NULL DEFAULT '';`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS invoice_number TEXT;`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS verification_code TEXT;`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS emitted_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS xml_file_name TEXT;`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS xml_storage_path TEXT;`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS pdf_file_name TEXT;`);
+  await pool.query(`ALTER TABLE documents_nfse_drafts ADD COLUMN IF NOT EXISTS pdf_storage_path TEXT;`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_documents_certidoes_status ON documents_certidoes(status);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_documents_certidoes_expiry ON documents_certidoes(expiry_date);`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_documents_certidoes_checked ON documents_certidoes(last_checked_at);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_documents_monthly_cnpj ON documents_monthly_obligations(cnpj);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_documents_nfse_drafts_cnpj_created ON documents_nfse_drafts(cnpj, created_at DESC);`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_documents_nfse_drafts_cnpj_invoice ON documents_nfse_drafts(cnpj, invoice_number) WHERE invoice_number IS NOT NULL;`);
   structureEnsured = true;
 }
 
@@ -212,6 +287,52 @@ async function savePdf(cnpj: string, certType: CertidaoTipo, base64: string): Pr
   return {
     storagePath: filePath,
     fileHash: createHash("sha256").update(data).digest("hex"),
+  };
+}
+
+function sanitizeForFilename(input: string): string {
+  return input.replace(/[^a-zA-Z0-9._-]+/g, "_");
+}
+
+async function saveMonthlyFile(input: {
+  cnpj: string;
+  obligationType: MonthlyObligationType;
+  competency: string;
+  kind: "single" | "boleto" | "receipt";
+  fileName: string;
+  base64: string;
+}): Promise<{ fileName: string; storagePath: string; fileHash: string }> {
+  await fs.mkdir(MONTHLY_STORAGE_ROOT, { recursive: true });
+  const originalName = input.fileName.trim() || `${input.kind}.pdf`;
+  const ext = path.extname(originalName) || ".pdf";
+  const safeName = sanitizeForFilename(`${input.cnpj}-${input.obligationType}-${input.competency}-${input.kind}${ext}`);
+  const storagePath = path.join(MONTHLY_STORAGE_ROOT, safeName);
+  const data = Buffer.from(input.base64, "base64");
+  await fs.writeFile(storagePath, data);
+  return {
+    fileName: originalName,
+    storagePath,
+    fileHash: createHash("sha256").update(data).digest("hex"),
+  };
+}
+
+async function saveNfseDraftFile(input: {
+  cnpj: string;
+  draftId: number;
+  kind: "xml" | "pdf";
+  fileName: string;
+  base64: string;
+}): Promise<{ fileName: string; storagePath: string }> {
+  await fs.mkdir(NFSE_STORAGE_ROOT, { recursive: true });
+  const originalName = input.fileName.trim() || `nfse-${input.kind}.${input.kind}`;
+  const ext = path.extname(originalName) || `.${input.kind}`;
+  const safeName = sanitizeForFilename(`${input.cnpj}-nfse-${input.draftId}-${input.kind}${ext}`);
+  const storagePath = path.join(NFSE_STORAGE_ROOT, safeName);
+  const data = Buffer.from(input.base64, "base64");
+  await fs.writeFile(storagePath, data);
+  return {
+    fileName: originalName,
+    storagePath,
   };
 }
 
@@ -549,7 +670,644 @@ export async function getCertidaoDownloadPath(cnpj: string, certType: CertidaoTi
     `SELECT storage_path FROM documents_certidoes WHERE cnpj = $1 AND cert_type = $2`,
     [normalizeCnpj(cnpj), certType],
   );
+  const filePath = result.rows[0]?.storage_path ?? null;
+  if (!filePath) return null;
+  return (await pathExists(filePath)) ? filePath : null;
+}
+
+export async function listMonthlyObligations(cnpj: string): Promise<MonthlyObligationRecord[]> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(cnpj);
+  const result = await pool.query<{
+    cnpj: string;
+    obligation_type: MonthlyObligationType;
+    competency: string;
+    upload_mode: MonthlyUploadMode;
+    single_file_name: string | null;
+    single_storage_path: string | null;
+    boleto_file_name: string | null;
+    boleto_storage_path: string | null;
+    receipt_file_name: string | null;
+    receipt_storage_path: string | null;
+    updated_at: string | null;
+  }>(
+    `SELECT cnpj, obligation_type, competency, upload_mode, single_file_name, single_storage_path, boleto_file_name, boleto_storage_path, receipt_file_name, receipt_storage_path, updated_at::text AS updated_at
+     FROM documents_monthly_obligations
+     WHERE cnpj = $1
+     ORDER BY competency DESC, obligation_type ASC`,
+    [normalized],
+  );
+  return result.rows.map((row) => ({
+    cnpj: row.cnpj,
+    obligationType: row.obligation_type,
+    competency: row.competency,
+    uploadMode: row.upload_mode,
+    singleFileName: row.single_file_name,
+    singleStoragePath: row.single_storage_path,
+    boletoFileName: row.boleto_file_name,
+    boletoStoragePath: row.boleto_storage_path,
+    receiptFileName: row.receipt_file_name,
+    receiptStoragePath: row.receipt_storage_path,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function listNfseDrafts(input: {
+  cnpj: string;
+  templateKey?: NfseTemplateKey;
+  status?: NfseDraftStatus;
+  competency?: string;
+  search?: string;
+}): Promise<NfseDraftRecord[]> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  const whereParts: string[] = ["cnpj = $1"];
+  const values: Array<string> = [normalized];
+  if (input.templateKey) {
+    values.push(input.templateKey);
+    whereParts.push(`template_key = $${values.length}`);
+  }
+  if (input.status) {
+    values.push(input.status);
+    whereParts.push(`status = $${values.length}`);
+  }
+  if (input.competency) {
+    values.push(input.competency);
+    whereParts.push(`competency = $${values.length}`);
+  }
+  if (input.search?.trim()) {
+    values.push(`%${input.search.trim()}%`);
+    whereParts.push(`(service_description ILIKE $${values.length} OR tomador_label ILIKE $${values.length} OR COALESCE(invoice_number, '') ILIKE $${values.length})`);
+  }
+  const result = await pool.query<{
+    id: number;
+    cnpj: string;
+    template_key: NfseTemplateKey;
+    competency: string;
+    tomador_label: string;
+    iss_mode: string;
+    reference_day: number;
+    service_description: string;
+    amount: string;
+    status: NfseDraftStatus;
+    invoice_number: string | null;
+    verification_code: string | null;
+    emitted_at: string | null;
+    xml_file_name: string | null;
+    xml_storage_path: string | null;
+    pdf_file_name: string | null;
+    pdf_storage_path: string | null;
+    created_at: string;
+    updated_at: string;
+  }>(
+    `SELECT id, cnpj, template_key, competency, tomador_label, iss_mode, reference_day, service_description, amount::text AS amount, status, invoice_number, verification_code, emitted_at::text AS emitted_at, xml_file_name, xml_storage_path, pdf_file_name, pdf_storage_path, created_at::text AS created_at, updated_at::text AS updated_at
+     FROM documents_nfse_drafts
+     WHERE ${whereParts.join(" AND ")}
+     ORDER BY created_at DESC
+     LIMIT 100`,
+    values,
+  );
+  return result.rows.map((row) => ({
+    id: row.id,
+    cnpj: row.cnpj,
+    templateKey: row.template_key,
+    competency: row.competency,
+    tomadorLabel: row.tomador_label,
+    issMode: row.iss_mode,
+    referenceDay: row.reference_day,
+    serviceDescription: row.service_description,
+    amount: Number(row.amount),
+    status: row.status,
+    invoiceNumber: row.invoice_number,
+    verificationCode: row.verification_code,
+    emittedAt: row.emitted_at,
+    xmlFileName: row.xml_file_name,
+    xmlStoragePath: row.xml_storage_path,
+    pdfFileName: row.pdf_file_name,
+    pdfStoragePath: row.pdf_storage_path,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+}
+
+export async function createNfseDraft(input: {
+  cnpj: string;
+  templateKey: NfseTemplateKey;
+  competency: string;
+  tomadorLabel: string;
+  issMode: string;
+  referenceDay: number;
+  serviceDescription: string;
+  amount: number;
+  status?: NfseDraftStatus;
+  userId: number;
+}): Promise<void> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  await pool.query(
+    `INSERT INTO documents_nfse_drafts (
+      cnpj, template_key, competency, tomador_label, iss_mode, reference_day, service_description, amount, status, created_by, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+    [
+      normalized,
+      input.templateKey,
+      input.competency.trim(),
+      input.tomadorLabel.trim(),
+      input.issMode.trim(),
+      input.referenceDay,
+      input.serviceDescription.trim(),
+      input.amount,
+      input.status ?? "preparada",
+      input.userId,
+    ],
+  );
+}
+
+function extractXmlTag(xml: string, tag: string): string | null {
+  const pattern = new RegExp(`<(?:\\w+:)?${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:\\w+:)?${tag}>`, "i");
+  const match = xml.match(pattern);
+  if (!match?.[1]) return null;
+  return match[1].trim();
+}
+
+function extractXmlTagInside(xml: string, blockTag: string, tag: string): string | null {
+  const blockPattern = new RegExp(`<(?:\\w+:)?${blockTag}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:\\w+:)?${blockTag}>`, "i");
+  const blockMatch = xml.match(blockPattern);
+  if (!blockMatch?.[1]) return null;
+  return extractXmlTag(blockMatch[1], tag);
+}
+
+function normalizeXmlDescription(value: string | null): string {
+  const raw = value ?? "";
+  return raw
+    .replace(/\\s\\n/g, "\n")
+    .replace(/\\s/g, " ")
+    .replace(/\r/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseNfseXmlPayload(xmlRaw: string): {
+  invoiceNumber: string | null;
+  verificationCode: string | null;
+  emittedAt: string | null;
+  competency: string;
+  amount: number;
+  description: string;
+  issRetido: string | null;
+  tomadorRazao: string;
+  tomadorCnpj: string;
+  prestadorCnpj: string;
+} {
+  const invoiceNumber = extractXmlTag(xmlRaw, "Numero");
+  const verificationCode = extractXmlTag(xmlRaw, "CodigoVerificacao");
+  const emittedAt = extractXmlTag(xmlRaw, "DataEmissao");
+  const competencyDate = extractXmlTag(xmlRaw, "Competencia");
+  const competency = /^\d{4}-\d{2}/.test(competencyDate ?? "") ? String(competencyDate).slice(0, 7) : monthIsoNow();
+  const amountRaw = extractXmlTag(xmlRaw, "ValorServicos") ?? extractXmlTag(xmlRaw, "BaseCalculo") ?? "0";
+  const amount = Number(amountRaw.replace(",", "."));
+  const description = normalizeXmlDescription(extractXmlTag(xmlRaw, "Discriminacao"));
+  const issRetido = extractXmlTag(xmlRaw, "IssRetido");
+  const tomadorRazao = extractXmlTagInside(xmlRaw, "Tomador", "RazaoSocial") ?? "Tomador não identificado";
+  const tomadorCnpj = normalizeCnpj(extractXmlTagInside(xmlRaw, "Tomador", "Cnpj") ?? "");
+  const prestadorCnpj = normalizeCnpj(extractXmlTagInside(xmlRaw, "Prestador", "Cnpj") ?? extractXmlTag(xmlRaw, "Cnpj") ?? "");
+  return {
+    invoiceNumber,
+    verificationCode,
+    emittedAt,
+    competency,
+    amount: Number.isFinite(amount) ? amount : 0,
+    description,
+    issRetido,
+    tomadorRazao,
+    tomadorCnpj,
+    prestadorCnpj,
+  };
+}
+
+function monthIsoNow(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+export async function importNfseDraftsFromXml(input: {
+  cnpj?: string;
+  files: Array<{ fileName: string; base64: string }>;
+  userId: number;
+}): Promise<{ imported: number; skipped: number }> {
+  await ensureCertidoesStructures();
+  const normalizedInputCnpj = normalizeCnpj(input.cnpj ?? "");
+  let imported = 0;
+  let skipped = 0;
+  for (const file of input.files) {
+    try {
+      const xmlText = Buffer.from(file.base64, "base64").toString("utf8");
+      const parsed = parseNfseXmlPayload(xmlText);
+      const targetCnpj = normalizedInputCnpj.length === 14 ? normalizedInputCnpj : parsed.prestadorCnpj;
+      if (targetCnpj.length !== 14) {
+        skipped += 1;
+        continue;
+      }
+      if (!parsed.invoiceNumber || !parsed.verificationCode || parsed.amount <= 0) {
+        skipped += 1;
+        continue;
+      }
+      if (parsed.prestadorCnpj && parsed.prestadorCnpj !== targetCnpj) {
+        skipped += 1;
+        continue;
+      }
+      const templateKey: NfseTemplateKey = parsed.issRetido === "1" ? "DIA_5_RETIDO" : "DIA_20_SEM_RETENCAO";
+      const referenceDay = templateKey === "DIA_5_RETIDO" ? 5 : 20;
+      const issMode = templateKey === "DIA_5_RETIDO" ? "ISS retido pelo tomador" : "Sem retenção de ISS";
+      const tomadorLabel = parsed.tomadorCnpj ? `${parsed.tomadorRazao} (CNPJ: ${parsed.tomadorCnpj})` : parsed.tomadorRazao;
+      const existing = await pool.query<{ id: number }>(
+        `SELECT id FROM documents_nfse_drafts WHERE cnpj = $1 AND invoice_number = $2 LIMIT 1`,
+        [targetCnpj, parsed.invoiceNumber],
+      );
+      const existingId = existing.rows[0]?.id ?? null;
+      if (existingId) {
+        const xmlStored = await saveNfseDraftFile({
+          cnpj: targetCnpj,
+          draftId: existingId,
+          kind: "xml",
+          fileName: file.fileName,
+          base64: file.base64,
+        });
+        await pool.query(
+          `UPDATE documents_nfse_drafts
+           SET template_key = $3,
+               competency = $4,
+               tomador_label = $5,
+               iss_mode = $6,
+               reference_day = $7,
+               service_description = $8,
+               amount = $9,
+               status = 'emitida',
+               invoice_number = $10,
+               verification_code = $11,
+               emitted_at = COALESCE($12::timestamptz, emitted_at, NOW()),
+               xml_file_name = $13,
+               xml_storage_path = $14,
+               updated_at = NOW()
+           WHERE id = $2 AND cnpj = $1`,
+          [
+            targetCnpj,
+            existingId,
+            templateKey,
+            parsed.competency,
+            tomadorLabel,
+            issMode,
+            referenceDay,
+            parsed.description || "Importado via XML",
+            parsed.amount,
+            parsed.invoiceNumber,
+            parsed.verificationCode,
+            parsed.emittedAt,
+            xmlStored.fileName,
+            xmlStored.storagePath,
+          ],
+        );
+        imported += 1;
+        continue;
+      }
+      const inserted = await pool.query<{ id: number }>(
+        `INSERT INTO documents_nfse_drafts (
+          cnpj, template_key, competency, tomador_label, iss_mode, reference_day, service_description, amount, status, invoice_number, verification_code, emitted_at, created_by, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'emitida', $9, $10, COALESCE($11::timestamptz, NOW()), $12, NOW())
+        RETURNING id`,
+        [
+          targetCnpj,
+          templateKey,
+          parsed.competency,
+          tomadorLabel,
+          issMode,
+          referenceDay,
+          parsed.description || "Importado via XML",
+          parsed.amount,
+          parsed.invoiceNumber,
+          parsed.verificationCode,
+          parsed.emittedAt,
+          input.userId,
+        ],
+      );
+      const insertedId = inserted.rows[0]?.id;
+      if (insertedId) {
+        const xmlStored = await saveNfseDraftFile({
+          cnpj: targetCnpj,
+          draftId: insertedId,
+          kind: "xml",
+          fileName: file.fileName,
+          base64: file.base64,
+        });
+        await pool.query(
+          `UPDATE documents_nfse_drafts
+           SET xml_file_name = $3,
+               xml_storage_path = $4,
+               updated_at = NOW()
+           WHERE cnpj = $1 AND id = $2`,
+          [targetCnpj, insertedId, xmlStored.fileName, xmlStored.storagePath],
+        );
+      }
+      imported += 1;
+    } catch {
+      skipped += 1;
+    }
+  }
+  return { imported, skipped };
+}
+
+export async function markNfseDraftAsEmitted(input: {
+  id: number;
+  cnpj: string;
+  invoiceNumber: string;
+  verificationCode: string;
+  emittedAt?: string;
+  xmlFile?: { fileName: string; base64: string };
+  pdfFile?: { fileName: string; base64: string };
+}): Promise<void> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  const current = await pool.query<{
+    id: number;
+    xml_storage_path: string | null;
+    pdf_storage_path: string | null;
+  }>(
+    `SELECT id, xml_storage_path, pdf_storage_path
+     FROM documents_nfse_drafts
+     WHERE id = $1 AND cnpj = $2`,
+    [input.id, normalized],
+  );
+  const row = current.rows[0];
+  if (!row) return;
+
+  let xmlStored: { fileName: string; storagePath: string } | null = null;
+  let pdfStored: { fileName: string; storagePath: string } | null = null;
+
+  if (input.xmlFile?.base64?.trim()) {
+    xmlStored = await saveNfseDraftFile({
+      cnpj: normalized,
+      draftId: input.id,
+      kind: "xml",
+      fileName: input.xmlFile.fileName,
+      base64: input.xmlFile.base64.trim(),
+    });
+  }
+  if (input.pdfFile?.base64?.trim()) {
+    pdfStored = await saveNfseDraftFile({
+      cnpj: normalized,
+      draftId: input.id,
+      kind: "pdf",
+      fileName: input.pdfFile.fileName,
+      base64: input.pdfFile.base64.trim(),
+    });
+  }
+
+  await pool.query(
+    `UPDATE documents_nfse_drafts
+     SET status = 'emitida',
+         invoice_number = $3,
+         verification_code = $4,
+         emitted_at = COALESCE($5::timestamptz, NOW()),
+         xml_file_name = COALESCE($6, xml_file_name),
+         xml_storage_path = COALESCE($7, xml_storage_path),
+         pdf_file_name = COALESCE($8, pdf_file_name),
+         pdf_storage_path = COALESCE($9, pdf_storage_path),
+         updated_at = NOW()
+     WHERE id = $1 AND cnpj = $2`,
+    [
+      input.id,
+      normalized,
+      input.invoiceNumber.trim(),
+      input.verificationCode.trim(),
+      input.emittedAt?.trim() || null,
+      xmlStored?.fileName ?? null,
+      xmlStored?.storagePath ?? null,
+      pdfStored?.fileName ?? null,
+      pdfStored?.storagePath ?? null,
+    ],
+  );
+}
+
+export async function getNfseDraftAttachmentPath(input: {
+  id: number;
+  cnpj: string;
+  kind: "xml" | "pdf";
+}): Promise<string | null> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  const column = input.kind === "xml" ? "xml_storage_path" : "pdf_storage_path";
+  const result = await pool.query<{ storage_path: string | null }>(
+    `SELECT ${column} AS storage_path
+     FROM documents_nfse_drafts
+     WHERE id = $1 AND cnpj = $2`,
+    [input.id, normalized],
+  );
   return result.rows[0]?.storage_path ?? null;
+}
+
+export async function upsertMonthlyObligation(input: {
+  cnpj: string;
+  obligationType: MonthlyObligationType;
+  competency: string;
+  uploadMode: MonthlyUploadMode;
+  singleFile?: { fileName: string; base64: string } | null;
+  boletoFile?: { fileName: string; base64: string } | null;
+  receiptFile?: { fileName: string; base64: string } | null;
+  userId: number;
+}): Promise<void> {
+  await ensureCertidoesStructures();
+  const normalizedCnpj = normalizeCnpj(input.cnpj);
+  const competency = input.competency.trim();
+
+  let singleStored: { fileName: string; storagePath: string; fileHash: string } | null = null;
+  let boletoStored: { fileName: string; storagePath: string; fileHash: string } | null = null;
+  let receiptStored: { fileName: string; storagePath: string; fileHash: string } | null = null;
+
+  if (input.singleFile?.base64?.trim()) {
+    singleStored = await saveMonthlyFile({
+      cnpj: normalizedCnpj,
+      obligationType: input.obligationType,
+      competency,
+      kind: "single",
+      fileName: input.singleFile.fileName,
+      base64: input.singleFile.base64.trim(),
+    });
+  }
+  if (input.boletoFile?.base64?.trim()) {
+    boletoStored = await saveMonthlyFile({
+      cnpj: normalizedCnpj,
+      obligationType: input.obligationType,
+      competency,
+      kind: "boleto",
+      fileName: input.boletoFile.fileName,
+      base64: input.boletoFile.base64.trim(),
+    });
+  }
+  if (input.receiptFile?.base64?.trim()) {
+    receiptStored = await saveMonthlyFile({
+      cnpj: normalizedCnpj,
+      obligationType: input.obligationType,
+      competency,
+      kind: "receipt",
+      fileName: input.receiptFile.fileName,
+      base64: input.receiptFile.base64.trim(),
+    });
+  }
+
+  await pool.query(
+    `INSERT INTO documents_monthly_obligations (
+      cnpj, obligation_type, competency, upload_mode, single_file_name, single_storage_path, single_file_hash, boleto_file_name, boleto_storage_path, boleto_file_hash, receipt_file_name, receipt_storage_path, receipt_file_hash, updated_by, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+    ON CONFLICT (cnpj, obligation_type, competency) DO UPDATE SET
+      upload_mode = EXCLUDED.upload_mode,
+      single_file_name = COALESCE(EXCLUDED.single_file_name, documents_monthly_obligations.single_file_name),
+      single_storage_path = COALESCE(EXCLUDED.single_storage_path, documents_monthly_obligations.single_storage_path),
+      single_file_hash = COALESCE(EXCLUDED.single_file_hash, documents_monthly_obligations.single_file_hash),
+      boleto_file_name = COALESCE(EXCLUDED.boleto_file_name, documents_monthly_obligations.boleto_file_name),
+      boleto_storage_path = COALESCE(EXCLUDED.boleto_storage_path, documents_monthly_obligations.boleto_storage_path),
+      boleto_file_hash = COALESCE(EXCLUDED.boleto_file_hash, documents_monthly_obligations.boleto_file_hash),
+      receipt_file_name = COALESCE(EXCLUDED.receipt_file_name, documents_monthly_obligations.receipt_file_name),
+      receipt_storage_path = COALESCE(EXCLUDED.receipt_storage_path, documents_monthly_obligations.receipt_storage_path),
+      receipt_file_hash = COALESCE(EXCLUDED.receipt_file_hash, documents_monthly_obligations.receipt_file_hash),
+      updated_by = EXCLUDED.updated_by,
+      updated_at = NOW()`,
+    [
+      normalizedCnpj,
+      input.obligationType,
+      competency,
+      input.uploadMode,
+      singleStored?.fileName ?? null,
+      singleStored?.storagePath ?? null,
+      singleStored?.fileHash ?? null,
+      boletoStored?.fileName ?? null,
+      boletoStored?.storagePath ?? null,
+      boletoStored?.fileHash ?? null,
+      receiptStored?.fileName ?? null,
+      receiptStored?.storagePath ?? null,
+      receiptStored?.fileHash ?? null,
+      input.userId,
+    ],
+  );
+}
+
+export async function getMonthlyObligationDownloadPath(input: {
+  cnpj: string;
+  obligationType: MonthlyObligationType;
+  competency: string;
+  kind: "single" | "boleto" | "receipt";
+}): Promise<string | null> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  const column =
+    input.kind === "single"
+      ? "single_storage_path"
+      : input.kind === "boleto"
+        ? "boleto_storage_path"
+        : "receipt_storage_path";
+  const result = await pool.query<{ storage_path: string | null }>(
+    `SELECT ${column} AS storage_path
+     FROM documents_monthly_obligations
+     WHERE cnpj = $1 AND obligation_type = $2 AND competency = $3`,
+    [normalized, input.obligationType, input.competency],
+  );
+  const filePath = result.rows[0]?.storage_path ?? null;
+  if (!filePath) return null;
+  return (await pathExists(filePath)) ? filePath : null;
+}
+
+export async function getMonthlyObligationCombinedPdf(input: {
+  cnpj: string;
+  obligationType: MonthlyObligationType;
+  competency: string;
+}): Promise<{ fileName: string; buffer: Buffer } | null> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  const result = await pool.query<{
+    single_storage_path: string | null;
+    boleto_storage_path: string | null;
+    receipt_storage_path: string | null;
+  }>(
+    `SELECT single_storage_path, boleto_storage_path, receipt_storage_path
+     FROM documents_monthly_obligations
+     WHERE cnpj = $1 AND obligation_type = $2 AND competency = $3`,
+    [normalized, input.obligationType, input.competency],
+  );
+  const row = result.rows[0];
+  if (!row?.single_storage_path && !row?.boleto_storage_path && !row?.receipt_storage_path) return null;
+
+  const outputPdf = await PDFDocument.create();
+
+  const appendFile = async (filePath: string) => {
+    if (!(await pathExists(filePath))) return;
+    const bytes = await fs.readFile(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    if (ext === ".pdf") {
+      const sourcePdf = await PDFDocument.load(bytes);
+      const copiedPages = await outputPdf.copyPages(sourcePdf, sourcePdf.getPageIndices());
+      copiedPages.forEach((page) => outputPdf.addPage(page));
+      return;
+    }
+    if (ext === ".png") {
+      const image = await outputPdf.embedPng(bytes);
+      const page = outputPdf.addPage([image.width, image.height]);
+      page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+      return;
+    }
+    if (ext === ".jpg" || ext === ".jpeg") {
+      const image = await outputPdf.embedJpg(bytes);
+      const page = outputPdf.addPage([image.width, image.height]);
+      page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+      return;
+    }
+    throw new Error("Formato de arquivo não suportado para composição PDF.");
+  };
+
+  if (row.single_storage_path) await appendFile(row.single_storage_path);
+  if (row.boleto_storage_path) await appendFile(row.boleto_storage_path);
+  if (row.receipt_storage_path) await appendFile(row.receipt_storage_path);
+  if (outputPdf.getPageCount() === 0) return null;
+
+  const mergedBytes = await outputPdf.save();
+  return {
+    fileName: `${normalized}-${input.obligationType}-${input.competency}-boleto-comprovante.pdf`,
+    buffer: Buffer.from(mergedBytes),
+  };
+}
+
+export async function deleteMonthlyObligation(input: {
+  cnpj: string;
+  obligationType: MonthlyObligationType;
+  competency: string;
+}): Promise<void> {
+  await ensureCertidoesStructures();
+  const normalized = normalizeCnpj(input.cnpj);
+  const existing = await pool.query<{
+    single_storage_path: string | null;
+    boleto_storage_path: string | null;
+    receipt_storage_path: string | null;
+  }>(
+    `SELECT single_storage_path, boleto_storage_path, receipt_storage_path
+     FROM documents_monthly_obligations
+     WHERE cnpj = $1 AND obligation_type = $2 AND competency = $3`,
+    [normalized, input.obligationType, input.competency],
+  );
+  const row = existing.rows[0];
+  await pool.query(
+    `DELETE FROM documents_monthly_obligations
+     WHERE cnpj = $1 AND obligation_type = $2 AND competency = $3`,
+    [normalized, input.obligationType, input.competency],
+  );
+  if (!row) return;
+  const paths = [row.single_storage_path, row.boleto_storage_path, row.receipt_storage_path].filter(
+    (value): value is string => Boolean(value),
+  );
+  for (const filePath of paths) {
+    try {
+      await fs.unlink(filePath);
+    } catch {
+      // ignora falha de remoção física para não quebrar operação principal
+    }
+  }
 }
 
 export async function getDefaultCnpj(): Promise<string | null> {

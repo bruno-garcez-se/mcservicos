@@ -320,3 +320,44 @@ export type DocumentCertidao = {
   lastError: string | null;
   updatedAt: string | null;
 };
+
+export type DocumentMonthlyObligationType = "SIMPLES" | "FGTS";
+export type DocumentMonthlyUploadMode = "single" | "separate";
+export type DocumentNfseTemplateKey = "DIA_5_RETIDO" | "DIA_20_SEM_RETENCAO";
+export type DocumentNfseDraftStatus = "preparada" | "emitida";
+
+export type DocumentMonthlyObligation = {
+  cnpj: string;
+  obligationType: DocumentMonthlyObligationType;
+  competency: string;
+  uploadMode: DocumentMonthlyUploadMode;
+  singleFileName: string | null;
+  singleStoragePath: string | null;
+  boletoFileName: string | null;
+  boletoStoragePath: string | null;
+  receiptFileName: string | null;
+  receiptStoragePath: string | null;
+  updatedAt: string | null;
+};
+
+export type DocumentNfseDraft = {
+  id: number;
+  cnpj: string;
+  templateKey: DocumentNfseTemplateKey;
+  competency: string;
+  tomadorLabel: string;
+  issMode: string;
+  referenceDay: number;
+  serviceDescription: string;
+  amount: number;
+  status: DocumentNfseDraftStatus;
+  invoiceNumber: string | null;
+  verificationCode: string | null;
+  emittedAt: string | null;
+  xmlFileName: string | null;
+  xmlStoragePath: string | null;
+  pdfFileName: string | null;
+  pdfStoragePath: string | null;
+  createdAt: string;
+  updatedAt: string;
+};

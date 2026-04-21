@@ -8,7 +8,7 @@ async function main(): Promise<void> {
 
   await pool.query(
     `INSERT INTO groups (name)
-     VALUES ('Financeiro'), ('RH')
+     VALUES ('Gerente'), ('Atendente')
      ON CONFLICT (name) DO NOTHING`,
   );
 
@@ -25,7 +25,7 @@ async function main(): Promise<void> {
     `INSERT INTO user_groups (user_id, group_id)
      SELECT u.id, g.id
      FROM users u
-     JOIN groups g ON g.name = 'Financeiro'
+     JOIN groups g ON g.name = 'Gerente'
      WHERE u.email = 'financeiro@empresa.com'
      ON CONFLICT DO NOTHING`,
   );
@@ -35,7 +35,7 @@ async function main(): Promise<void> {
   );
   const adminId = adminResult.rows[0]?.id as number | undefined;
   const financeiroResult = await pool.query(
-    `SELECT id FROM groups WHERE name = 'Financeiro' LIMIT 1`,
+    `SELECT id FROM groups WHERE name = 'Gerente' LIMIT 1`,
   );
   const financeiroGroupId = financeiroResult.rows[0]?.id as number | undefined;
 

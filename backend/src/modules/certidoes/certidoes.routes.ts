@@ -2,17 +2,31 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../../middlewares/auth";
 import {
+  createNfseDraft,
+  getNfseDraftAttachmentPath,
   getCertidaoDownloadPath,
   getCertidoesStatus,
   getDefaultCnpj,
+  getMonthlyObligationCombinedPdf,
+  getMonthlyObligationDownloadPath,
+  importNfseDraftsFromXml,
+  listNfseDrafts,
+  markNfseDraftAsEmitted,
+  listMonthlyObligations,
+  deleteMonthlyObligation,
   refreshCertidoes,
   extractManualDataFromPdf,
+  upsertMonthlyObligation,
   upsertManualCertidao,
   upsertCertificateConfig,
 } from "./certidoes.service";
 
 const certidoesRouter = Router();
 const certTypeSchema = z.enum(["CNDT", "CNF", "CRF"]);
+const monthlyObligationTypeSchema = z.enum(["SIMPLES", "FGTS"]);
+const monthlyUploadModeSchema = z.enum(["single", "separate"]);
+const nfseTemplateKeySchema = z.enum(["DIA_5_RETIDO", "DIA_20_SEM_RETENCAO"]);
+const nfseDraftStatusSchema = z.enum(["preparada", "emitida"]);
 
 function normalizeCnpj(value: string): string {
   return value.replace(/\D/g, "");
@@ -120,6 +134,283 @@ certidoesRouter.post("/manual", async (req, res) => {
   });
   const data = await getCertidoesStatus(payload.cnpj);
   res.status(201).json(data);
+});
+
+certidoesRouter.get("/monthly", async (req, res) => {
+  const query = z
+    .object({
+      cnpj: z.string().min(14).optional(),
+    })
+    .parse(req.query);
+  const fallbackCnpj = await getDefaultCnpj();
+  const cnpj = normalizeCnpj(query.cnpj ?? fallbackCnpj ?? "");
+  if (!cnpj) {
+    res.json({ items: [] });
+    return;
+  }
+  const items = await listMonthlyObligations(cnpj);
+  res.json({ items });
+});
+
+certidoesRouter.post("/monthly", async (req, res) => {
+  const user = req.user!;
+  const payload = z
+    .object({
+      cnpj: z.string().min(14),
+      obligationType: monthlyObligationTypeSchema,
+      competency: z.string().regex(/^\d{4}-\d{2}$/),
+      uploadMode: monthlyUploadModeSchema,
+      singleFile: z
+        .object({
+          fileName: z.string().min(1).max(200),
+          base64: z.string().min(50).max(30_000_000),
+        })
+        .optional(),
+      boletoFile: z
+        .object({
+          fileName: z.string().min(1).max(200),
+          base64: z.string().min(50).max(30_000_000),
+        })
+        .optional(),
+      receiptFile: z
+        .object({
+          fileName: z.string().min(1).max(200),
+          base64: z.string().min(50).max(30_000_000),
+        })
+        .optional(),
+    })
+    .parse(req.body ?? {});
+
+  if (payload.uploadMode === "single" && !payload.singleFile?.base64) {
+    res.status(400).json({ message: "Arquivo único é obrigatório no modo de envio único." });
+    return;
+  }
+  if (payload.uploadMode === "separate" && !payload.boletoFile?.base64 && !payload.receiptFile?.base64) {
+    res.status(400).json({ message: "Informe ao menos boleto ou comprovante no modo de envio separado." });
+    return;
+  }
+
+  await upsertMonthlyObligation({
+    cnpj: payload.cnpj,
+    obligationType: payload.obligationType,
+    competency: payload.competency,
+    uploadMode: payload.uploadMode,
+    singleFile: payload.singleFile,
+    boletoFile: payload.boletoFile,
+    receiptFile: payload.receiptFile,
+    userId: user.id,
+  });
+  const items = await listMonthlyObligations(payload.cnpj);
+  res.status(201).json({ items });
+});
+
+certidoesRouter.get("/nfse-drafts", async (req, res) => {
+  const query = z
+    .object({
+      cnpj: z.string().min(14).optional(),
+      templateKey: nfseTemplateKeySchema.optional(),
+      status: nfseDraftStatusSchema.optional(),
+      competency: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+      search: z.string().max(120).optional(),
+    })
+    .parse(req.query);
+  const fallbackCnpj = await getDefaultCnpj();
+  const cnpj = normalizeCnpj(query.cnpj ?? fallbackCnpj ?? "");
+  if (!cnpj) {
+    res.json({ items: [] });
+    return;
+  }
+  const items = await listNfseDrafts({
+    cnpj,
+    templateKey: query.templateKey,
+    status: query.status,
+    competency: query.competency,
+    search: query.search,
+  });
+  res.json({ items });
+});
+
+certidoesRouter.post("/nfse-drafts", async (req, res) => {
+  const user = req.user!;
+  const payload = z
+    .object({
+      cnpj: z.string().min(14),
+      templateKey: nfseTemplateKeySchema,
+      competency: z.string().regex(/^\d{4}-\d{2}$/),
+      tomadorLabel: z.string().min(2).max(180),
+      issMode: z.string().min(2).max(120),
+      referenceDay: z.union([z.literal(5), z.literal(20)]),
+      serviceDescription: z.string().min(3).max(2000),
+      amount: z.number().positive(),
+      status: nfseDraftStatusSchema.optional(),
+    })
+    .parse(req.body ?? {});
+  await createNfseDraft({
+    cnpj: payload.cnpj,
+    templateKey: payload.templateKey,
+    competency: payload.competency,
+    tomadorLabel: payload.tomadorLabel,
+    issMode: payload.issMode,
+    referenceDay: payload.referenceDay,
+    serviceDescription: payload.serviceDescription,
+    amount: payload.amount,
+    status: payload.status,
+    userId: user.id,
+  });
+  const items = await listNfseDrafts({ cnpj: payload.cnpj });
+  res.status(201).json({ items });
+});
+
+certidoesRouter.post("/nfse-drafts/import-xml", async (req, res) => {
+  const user = req.user!;
+  const payload = z
+    .object({
+      cnpj: z.string().min(14).optional(),
+      files: z
+        .array(
+          z.object({
+            fileName: z.string().min(1).max(220),
+            base64: z.string().min(80).max(30_000_000),
+          }),
+        )
+        .min(1)
+        .max(100),
+    })
+    .parse(req.body ?? {});
+  const result = await importNfseDraftsFromXml({
+    cnpj: payload.cnpj,
+    files: payload.files,
+    userId: user.id,
+  });
+  const queryCnpj = normalizeCnpj(payload.cnpj ?? "");
+  const items = queryCnpj
+    ? await listNfseDrafts({ cnpj: queryCnpj })
+    : await listNfseDrafts({ cnpj: normalizeCnpj((await getDefaultCnpj()) ?? "") });
+  res.status(201).json({
+    items,
+    imported: result.imported,
+    skipped: result.skipped,
+  });
+});
+
+certidoesRouter.patch("/nfse-drafts/:id/emitted", async (req, res) => {
+  const params = z
+    .object({
+      id: z.coerce.number().int().positive(),
+    })
+    .parse(req.params);
+  const payload = z
+    .object({
+      cnpj: z.string().min(14),
+      invoiceNumber: z.string().min(1).max(40),
+      verificationCode: z.string().min(1).max(60),
+      emittedAt: z.string().datetime().optional(),
+      xmlFile: z
+        .object({
+          fileName: z.string().min(1).max(220),
+          base64: z.string().min(50).max(30_000_000),
+        })
+        .optional(),
+      pdfFile: z
+        .object({
+          fileName: z.string().min(1).max(220),
+          base64: z.string().min(50).max(30_000_000),
+        })
+        .optional(),
+    })
+    .parse(req.body ?? {});
+  await markNfseDraftAsEmitted({
+    id: params.id,
+    cnpj: payload.cnpj,
+    invoiceNumber: payload.invoiceNumber,
+    verificationCode: payload.verificationCode,
+    emittedAt: payload.emittedAt,
+    xmlFile: payload.xmlFile,
+    pdfFile: payload.pdfFile,
+  });
+  const items = await listNfseDrafts({ cnpj: payload.cnpj });
+  res.json({ items });
+});
+
+certidoesRouter.get("/nfse-drafts/:id/:kind/download", async (req, res) => {
+  const params = z
+    .object({
+      id: z.coerce.number().int().positive(),
+      kind: z.enum(["xml", "pdf"]),
+    })
+    .parse(req.params);
+  const query = z.object({ cnpj: z.string().min(14) }).parse(req.query);
+  const filePath = await getNfseDraftAttachmentPath({
+    id: params.id,
+    cnpj: query.cnpj,
+    kind: params.kind,
+  });
+  if (!filePath) {
+    res.status(404).json({ message: "Arquivo da NFS-e não encontrado." });
+    return;
+  }
+  res.download(filePath);
+});
+
+certidoesRouter.get("/monthly/:obligationType/:competency/combined/download", async (req, res) => {
+  const params = z
+    .object({
+      obligationType: monthlyObligationTypeSchema,
+      competency: z.string().regex(/^\d{4}-\d{2}$/),
+    })
+    .parse(req.params);
+  const query = z.object({ cnpj: z.string().min(14) }).parse(req.query);
+  const merged = await getMonthlyObligationCombinedPdf({
+    cnpj: query.cnpj,
+    obligationType: params.obligationType,
+    competency: params.competency,
+  });
+  if (!merged) {
+    res.status(404).json({ message: "Não foi possível gerar o PDF combinado para esta competência." });
+    return;
+  }
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${merged.fileName}"`);
+  res.send(merged.buffer);
+});
+
+certidoesRouter.get("/monthly/:obligationType/:competency/:kind/download", async (req, res) => {
+  const params = z
+    .object({
+      obligationType: monthlyObligationTypeSchema,
+      competency: z.string().regex(/^\d{4}-\d{2}$/),
+      kind: z.enum(["single", "boleto", "receipt"]),
+    })
+    .parse(req.params);
+  const query = z.object({ cnpj: z.string().min(14) }).parse(req.query);
+  const filePath = await getMonthlyObligationDownloadPath({
+    cnpj: query.cnpj,
+    obligationType: params.obligationType,
+    competency: params.competency,
+    kind: params.kind,
+  });
+  if (!filePath) {
+    res.status(404).json({ message: "Arquivo mensal não encontrado para download." });
+    return;
+  }
+  res.download(filePath);
+});
+
+certidoesRouter.delete("/monthly/:obligationType/:competency", async (req, res) => {
+  const params = z
+    .object({
+      obligationType: monthlyObligationTypeSchema,
+      competency: z.string().regex(/^\d{4}-\d{2}$/),
+    })
+    .parse(req.params);
+  const query = z.object({ cnpj: z.string().min(14) }).parse(req.query);
+  await deleteMonthlyObligation({
+    cnpj: query.cnpj,
+    obligationType: params.obligationType,
+    competency: params.competency,
+  });
+  const items = await listMonthlyObligations(query.cnpj);
+  res.json({ items });
 });
 
 certidoesRouter.get("/:tipo/download", async (req, res) => {

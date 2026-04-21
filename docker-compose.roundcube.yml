@@ -1,0 +1,78 @@
+services:
+  roundcube-db:
+    image: mariadb:10.11
+    container_name: mc-roundcube-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${ROUNDCUBE_DB_NAME:-roundcube}
+      MARIADB_USER: ${ROUNDCUBE_DB_USER:-roundcube}
+      MARIADB_PASSWORD: ${ROUNDCUBE_DB_PASSWORD:-roundcube}
+      MARIADB_ROOT_PASSWORD: ${ROUNDCUBE_DB_ROOT_PASSWORD:-root}
+    volumes:
+      - roundcube-db-data:/var/lib/mysql
+
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    container_name: mc-roundcube
+    restart: unless-stopped
+    ports:
+      - "${ROUNDCUBE_HTTP_PORT:-8088}:80"
+    depends_on:
+      - roundcube-db
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: mysql
+      ROUNDCUBEMAIL_DB_HOST: roundcube-db
+      ROUNDCUBEMAIL_DB_PORT: 3306
+      ROUNDCUBEMAIL_DB_USER: ${ROUNDCUBE_DB_USER:-roundcube}
+      ROUNDCUBEMAIL_DB_PASSWORD: ${ROUNDCUBE_DB_PASSWORD:-roundcube}
+      ROUNDCUBEMAIL_DB_NAME: ${ROUNDCUBE_DB_NAME:-roundcube}
+      ROUNDCUBEMAIL_DEFAULT_HOST: ${ROUNDCUBE_DEFAULT_IMAP_HOST:-tls://mail.seudominio.com.br}
+      ROUNDCUBEMAIL_DEFAULT_PORT: ${ROUNDCUBE_DEFAULT_IMAP_PORT:-993}
+      ROUNDCUBEMAIL_SMTP_SERVER: ${ROUNDCUBE_DEFAULT_SMTP_HOST:-tls://mail.seudominio.com.br}
+      ROUNDCUBEMAIL_SMTP_PORT: ${ROUNDCUBE_DEFAULT_SMTP_PORT:-587}
+      ROUNDCUBEMAIL_SKIN: elastic
+    volumes:
+      - roundcube-html:/var/www/html
+
+volumes:
+  roundcube-db-data:
+  roundcube-html:
+services:
+  roundcube-db:
+    image: mariadb:10.11
+    container_name: mc-roundcube-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${ROUNDCUBE_DB_NAME:-roundcube}
+      MARIADB_USER: ${ROUNDCUBE_DB_USER:-roundcube}
+      MARIADB_PASSWORD: ${ROUNDCUBE_DB_PASSWORD:-roundcube}
+      MARIADB_ROOT_PASSWORD: ${ROUNDCUBE_DB_ROOT_PASSWORD:-root}
+    volumes:
+      - roundcube-db-data:/var/lib/mysql
+
+  roundcube:
+    image: roundcube/roundcubemail:latest
+    container_name: mc-roundcube
+    restart: unless-stopped
+    ports:
+      - "${ROUNDCUBE_HTTP_PORT:-8088}:80"
+    depends_on:
+      - roundcube-db
+    environment:
+      ROUNDCUBEMAIL_DB_TYPE: mysql
+      ROUNDCUBEMAIL_DB_HOST: roundcube-db
+      ROUNDCUBEMAIL_DB_PORT: 3306
+      ROUNDCUBEMAIL_DB_USER: ${ROUNDCUBE_DB_USER:-roundcube}
+      ROUNDCUBEMAIL_DB_PASSWORD: ${ROUNDCUBE_DB_PASSWORD:-roundcube}
+      ROUNDCUBEMAIL_DB_NAME: ${ROUNDCUBE_DB_NAME:-roundcube}
+      ROUNDCUBEMAIL_DEFAULT_HOST: ${ROUNDCUBE_DEFAULT_IMAP_HOST:-tls://mail.seudominio.com.br}
+      ROUNDCUBEMAIL_DEFAULT_PORT: ${ROUNDCUBE_DEFAULT_IMAP_PORT:-993}
+      ROUNDCUBEMAIL_SMTP_SERVER: ${ROUNDCUBE_DEFAULT_SMTP_HOST:-tls://mail.seudominio.com.br}
+      ROUNDCUBEMAIL_SMTP_PORT: ${ROUNDCUBE_DEFAULT_SMTP_PORT:-587}
+      ROUNDCUBEMAIL_SKIN: elastic
+    volumes:
+      - roundcube-html:/var/www/html
+
+volumes:
+  roundcube-db-data:
+  roundcube-html:

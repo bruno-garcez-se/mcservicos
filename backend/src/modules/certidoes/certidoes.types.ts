@@ -1,6 +1,10 @@
 export type CertidaoTipo = "CNDT" | "CNF" | "CRF";
 
 export type CertidaoStatus = "valida" | "vencendo" | "vencida" | "pendente" | "falha";
+export type MonthlyObligationType = "SIMPLES" | "FGTS";
+export type MonthlyUploadMode = "single" | "separate";
+export type NfseTemplateKey = "DIA_5_RETIDO" | "DIA_20_SEM_RETENCAO";
+export type NfseDraftStatus = "preparada" | "emitida";
 
 export type RunnerMode = "backend" | "agent";
 
@@ -49,4 +53,40 @@ export type CertidaoRecord = {
   lastSuccessAt: string | null;
   lastError: string | null;
   updatedAt: string | null;
+};
+
+export type MonthlyObligationRecord = {
+  cnpj: string;
+  obligationType: MonthlyObligationType;
+  competency: string;
+  uploadMode: MonthlyUploadMode;
+  singleFileName: string | null;
+  singleStoragePath: string | null;
+  boletoFileName: string | null;
+  boletoStoragePath: string | null;
+  receiptFileName: string | null;
+  receiptStoragePath: string | null;
+  updatedAt: string | null;
+};
+
+export type NfseDraftRecord = {
+  id: number;
+  cnpj: string;
+  templateKey: NfseTemplateKey;
+  competency: string;
+  tomadorLabel: string;
+  issMode: string;
+  referenceDay: number;
+  serviceDescription: string;
+  amount: number;
+  status: NfseDraftStatus;
+  invoiceNumber: string | null;
+  verificationCode: string | null;
+  emittedAt: string | null;
+  xmlFileName: string | null;
+  xmlStoragePath: string | null;
+  pdfFileName: string | null;
+  pdfStoragePath: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
