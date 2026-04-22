@@ -389,9 +389,7 @@ export default function App() {
   const vpnAgentReachable = Boolean(vpnStatus?.agentReachable);
   const vpnNeedsSelection = Boolean(vpnStatus?.needsSelection);
   const vpnCanToggle = Boolean(vpnStatus?.available && !vpnNeedsSelection);
-  const vpnLooksWithoutAgent =
-    !vpnAgentReachable ||
-    (!vpnStatus?.available && !vpnStatus?.configured && !vpnStatus?.connectionExists && !vpnConnected);
+  const vpnLooksWithoutAgent = !vpnAgentReachable;
   const vpnTooltip = vpnTransitionInProgress
     ? vpnConnected
       ? "Ligando VPN..."
@@ -451,12 +449,7 @@ export default function App() {
     }
 
     const canToggleNow = Boolean(currentStatus.available && !currentStatus.needsSelection);
-    const looksWithoutAgentNow =
-      !currentStatus.agentReachable ||
-      (!currentStatus.available &&
-        !currentStatus.configured &&
-        !currentStatus.connectionExists &&
-        !currentStatus.connected);
+    const looksWithoutAgentNow = !currentStatus.agentReachable;
     const shouldEnable = !currentStatus.connected;
 
     if (!canToggleNow) {
@@ -490,9 +483,7 @@ export default function App() {
     try {
       const next = await setAgentVpnEnabled(shouldEnable);
       setVpnStatus(next);
-      const nextLooksWithoutAgent =
-        !next.agentReachable ||
-        (!next.available && !next.configured && !next.connectionExists && !next.connected);
+      const nextLooksWithoutAgent = !next.agentReachable;
       if (nextLooksWithoutAgent) {
         openInstallAgentFlow();
         return;
@@ -528,12 +519,7 @@ export default function App() {
     }
 
     const canToggleNow = Boolean(currentStatus.available && !currentStatus.needsSelection);
-    const looksWithoutAgentNow =
-      !currentStatus.agentReachable ||
-      (!currentStatus.available &&
-        !currentStatus.configured &&
-        !currentStatus.connectionExists &&
-        !currentStatus.connected);
+    const looksWithoutAgentNow = !currentStatus.agentReachable;
 
     if (!canToggleNow) {
       if (looksWithoutAgentNow) {
