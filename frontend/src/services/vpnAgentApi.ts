@@ -61,9 +61,10 @@ async function checkAgentHealth(force = false): Promise<boolean> {
 
   try {
     const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/health`, undefined, AGENT_DISCOVERY_TIMEOUT_MS);
-    const ok = response.ok;
-    cachedHealth = { ok, checkedAt: Date.now() };
-    return ok;
+    // Qualquer resposta HTTP significa que o agente está alcançável localmente.
+    const reachable = response.status > 0;
+    cachedHealth = { ok: reachable, checkedAt: Date.now() };
+    return reachable;
   } catch {
     cachedHealth = { ok: false, checkedAt: Date.now() };
     return false;
@@ -88,6 +89,37 @@ export async function getAgentVpnStatus(): Promise<AgentVpnStatus> {
   try {
     const response = await fetchWithTimeout(`${AGENT_BASE_URL}/v1/vpn/status`, undefined, AGENT_REQUEST_TIMEOUT_MS);
     if (!response.ok) {
+      let responseMessage: string | undefined;
+      try {
+        const payload = (await response.json()) as { message?: unknown };
+        responseMessage = typeof payload.message === "string" ? payload.message : undefined;
+      } catch {
+        responseMessage = undefined;
+      }
+      if (response.status === 401) {
+        return {
+          agentReachable: true,
+          available: false,
+          connected: false,
+          configured: false,
+          connectionExists: false,
+          connectionName: null,
+          needsSelection: false,
+          message: responseMessage ?? "Agente VPN respondeu, mas recusou acesso (token local inválido).",
+        };
+      }
+      if (response.status === 403) {
+        return {
+          agentReachable: true,
+          available: false,
+          connected: false,
+          configured: false,
+          connectionExists: false,
+          connectionName: null,
+          needsSelection: false,
+          message: responseMessage ?? "Agente VPN respondeu, mas bloqueou esta origem no CORS local.",
+        };
+      }
       return {
         agentReachable: true,
         available: false,
@@ -95,8 +127,8 @@ export async function getAgentVpnStatus(): Promise<AgentVpnStatus> {
         configured: false,
         connectionExists: false,
         connectionName: null,
-        needsSelection: true,
-        message: "Agente VPN indisponível.",
+        needsSelection: false,
+        message: responseMessage ?? "Agente VPN indisponível.",
       };
     }
     const payload = (await response.json()) as AgentStatusPayload;
