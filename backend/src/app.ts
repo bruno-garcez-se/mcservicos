@@ -18,8 +18,11 @@ import { errorHandler } from "./middlewares/errorHandler";
 
 export const app = express();
 
+const defaultAllowedOrigins = ["https://frontend-mc-servicos.vercel.app"];
+
 const allowedOrigins = new Set(
   [
+    ...defaultAllowedOrigins,
     env.FRONTEND_URL,
     ...(env.FRONTEND_URLS
       ? env.FRONTEND_URLS.split(",")
