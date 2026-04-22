@@ -20,12 +20,16 @@ import {
 import { CndtProvider } from "./providers/cndt.provider";
 import { CnfProvider } from "./providers/cnf.provider";
 import { CrfProvider } from "./providers/crf.provider";
+import { CndmProvider } from "./providers/cndm.provider";
+import { CndeProvider } from "./providers/cnde.provider";
+import { CndjProvider } from "./providers/cndj.provider";
 import { extractControlCodeByLabel } from "./providers/provider.utils";
 import { BackendRunner } from "./runners/backend.runner";
 import { AgentRunner } from "./runners/agent.runner";
 import { PDFParse } from "pdf-parse";
 
-const CERT_TYPES: CertidaoTipo[] = ["CNDT", "CNF", "CRF"];
+const CERT_TYPES: CertidaoTipo[] = ["CNDT", "CNF", "CRF", "CNDM", "CNDE", "CNDJ"];
+const AUTO_REFRESH_CERT_TYPES = new Set<CertidaoTipo>(["CNDT", "CNF", "CRF"]);
 const EXPIRING_WINDOW_DAYS = Number(process.env.CERTIDOES_EXPIRING_WINDOW_DAYS || 7);
 const CERT_STORAGE_ROOT = path.resolve(process.cwd(), "storage", "certidoes");
 const MONTHLY_STORAGE_ROOT = path.resolve(process.cwd(), "storage", "documentos-mensais");
@@ -36,6 +40,9 @@ const providers = {
   CNDT: new CndtProvider(),
   CNF: new CnfProvider(),
   CRF: new CrfProvider(),
+  CNDM: new CndmProvider(),
+  CNDE: new CndeProvider(),
+  CNDJ: new CndjProvider(),
 } as const;
 
 async function pathExists(filePath: string): Promise<boolean> {
@@ -147,7 +154,7 @@ async function ensureCertidoesStructures(): Promise<void> {
     CREATE TABLE IF NOT EXISTS documents_certidoes (
       id SERIAL PRIMARY KEY,
       cnpj TEXT NOT NULL,
-      cert_type TEXT NOT NULL CHECK (cert_type IN ('CNDT', 'CNF', 'CRF')),
+      cert_type TEXT NOT NULL CHECK (cert_type IN ('CNDT', 'CNF', 'CRF', 'CNDM', 'CNDE', 'CNDJ')),
       status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('valida', 'vencendo', 'vencida', 'pendente', 'falha')),
       issue_date DATE,
       expiry_date DATE,
@@ -166,7 +173,7 @@ async function ensureCertidoesStructures(): Promise<void> {
     CREATE TABLE IF NOT EXISTS documents_certidoes_runs (
       id SERIAL PRIMARY KEY,
       cnpj TEXT NOT NULL,
-      cert_type TEXT NOT NULL CHECK (cert_type IN ('CNDT', 'CNF', 'CRF')),
+      cert_type TEXT NOT NULL CHECK (cert_type IN ('CNDT', 'CNF', 'CRF', 'CNDM', 'CNDE', 'CNDJ')),
       runner_mode TEXT NOT NULL CHECK (runner_mode IN ('backend', 'agent')),
       status TEXT NOT NULL CHECK (status IN ('success', 'failure')),
       message TEXT,
@@ -175,6 +182,18 @@ async function ensureCertidoesStructures(): Promise<void> {
       created_by INT REFERENCES users(id)
     );
   `);
+  await pool.query(`ALTER TABLE documents_certidoes DROP CONSTRAINT IF EXISTS documents_certidoes_cert_type_check;`);
+  await pool.query(`ALTER TABLE documents_certidoes_runs DROP CONSTRAINT IF EXISTS documents_certidoes_runs_cert_type_check;`);
+  await pool.query(
+    `ALTER TABLE documents_certidoes
+     ADD CONSTRAINT documents_certidoes_cert_type_check
+     CHECK (cert_type IN ('CNDT', 'CNF', 'CRF', 'CNDM', 'CNDE', 'CNDJ'))`,
+  );
+  await pool.query(
+    `ALTER TABLE documents_certidoes_runs
+     ADD CONSTRAINT documents_certidoes_runs_cert_type_check
+     CHECK (cert_type IN ('CNDT', 'CNF', 'CRF', 'CNDM', 'CNDE', 'CNDJ'))`,
+  );
   await pool.query(`
     CREATE TABLE IF NOT EXISTS documents_monthly_obligations (
       id SERIAL PRIMARY KEY,
@@ -345,11 +364,135 @@ function cleanPdfText(rawText: string): string {
   return rawText.replace(/\u0000/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function collectPdfUrlsFromJson(value: unknown, output: Set<string>): void {
+  if (!value) return;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^https?:\/\//i.test(trimmed) && trimmed.toLowerCase().includes("pdf")) {
+      output.add(trimmed);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectPdfUrlsFromJson(item, output);
+    }
+    return;
+  }
+  if (typeof value !== "object") return;
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof nested === "string") {
+      const trimmed = nested.trim();
+      const keyLower = key.toLowerCase();
+      if (
+        /^https?:\/\//i.test(trimmed) &&
+        (keyLower.includes("pdf") ||
+          keyLower.includes("receipt") ||
+          keyLower.includes("comprovante") ||
+          trimmed.toLowerCase().includes("pdf") ||
+          trimmed.toLowerCase().includes("infosimples-storage"))
+      ) {
+        output.add(trimmed);
+      }
+    }
+    collectPdfUrlsFromJson(nested, output);
+  }
+}
+
+function isInfoSimplesStorageUrl(url: string): boolean {
+  return /infosimples-storage/i.test(url);
+}
+
+function extractPdfUrlCandidates(input: {
+  sourceUrl: string | null;
+  rawText: string | null;
+}): string[] {
+  const urls = new Set<string>();
+  const sourceUrl = (input.sourceUrl ?? "").trim();
+  if (
+    /^https?:\/\//i.test(sourceUrl) &&
+    (sourceUrl.toLowerCase().includes("pdf") || isInfoSimplesStorageUrl(sourceUrl))
+  ) {
+    urls.add(sourceUrl);
+  }
+  const rawText = (input.rawText ?? "").trim();
+  if (!rawText) return [...urls];
+
+  try {
+    const parsed = JSON.parse(rawText) as unknown;
+    collectPdfUrlsFromJson(parsed, urls);
+  } catch {
+    // se não for JSON, tenta extrair URL de texto livre
+  }
+
+  const regex = /(https?:\/\/[^\s"'<>]+(?:\.pdf|pdf[^\s"'<>]*))/gi;
+  const regexMatches = rawText.match(regex) ?? [];
+  for (const match of regexMatches) {
+    urls.add(match);
+  }
+  return [...urls];
+}
+
+async function renderUrlToPdfBase64(url: string): Promise<string | null> {
+  let browser: { close: () => Promise<void> } | null = null;
+  try {
+    const playwright = await import("playwright");
+    browser = await playwright.chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 1800 } });
+    await page.goto(url, { waitUntil: "networkidle", timeout: 20000 });
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "12mm", right: "12mm", bottom: "12mm", left: "12mm" },
+    });
+    return Buffer.from(pdfBuffer).toString("base64");
+  } catch {
+    return null;
+  } finally {
+    try {
+      if (browser) await browser.close();
+    } catch {
+      // noop
+    }
+  }
+}
+
+async function downloadPdfAsBase64(url: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const startsWithPdfHeader = bytes.length >= 4 && bytes.subarray(0, 4).toString("ascii") === "%PDF";
+    const looksLikePdf = contentType.includes("application/pdf") || startsWithPdfHeader;
+    if (looksLikePdf) {
+      return bytes.toString("base64");
+    }
+  } catch {
+    // fallback handled below
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (isInfoSimplesStorageUrl(url)) {
+    return await renderUrlToPdfBase64(url);
+  }
+  return null;
+}
+
 function extractControlCodeFromText(certType: CertidaoTipo, rawText: string): string | null {
   const labelsByType: Record<CertidaoTipo, string[]> = {
     CNDT: ["Código de controle", "Código de verificação", "Número da certidão", "Certidão nº"],
     CNF: ["Código de controle", "Número da certidão", "Número", "Certidão nº"],
     CRF: ["Certificação Número", "Chave de identificação", "Código de controle", "Número da certidão", "Certificado nº"],
+    CNDM: ["Autenticação", "Codigo de autenticacao", "Sequencial", "Número da certidão"],
+    CNDE: ["Autenticação", "Número da certidão", "N.", "Código de controle"],
+    CNDJ: ["Código de Autenticidade", "Protocolo", "Número da certidão", "Código de controle"],
   };
   return extractControlCodeByLabel(rawText, labelsByType[certType]);
 }
@@ -518,6 +661,23 @@ async function runSingleRefresh(cnpj: string, certType: CertidaoTipo, userId: nu
     return;
   }
 
+  if (!AUTO_REFRESH_CERT_TYPES.has(certType)) {
+    await pool.query(
+      `UPDATE documents_certidoes
+       SET last_checked_at = NOW(),
+           last_error = NULL,
+           updated_at = NOW()
+       WHERE cnpj = $1 AND cert_type = $2`,
+      [cnpj, certType],
+    );
+    await pool.query(
+      `INSERT INTO documents_certidoes_runs (cnpj, cert_type, runner_mode, status, message, started_at, finished_at, created_by)
+       VALUES ($1, $2, 'backend', 'success', $3, $4, NOW(), $5)`,
+      [cnpj, certType, "Tipo de certidão com atualização manual (sem consulta automática).", startedAt, userId],
+    );
+    return;
+  }
+
   const provider = providers[certType];
   const runner = selectRunner(config.runnerMode);
   const payload = await runner.execute({ certType, cnpj, certificate: config });
@@ -540,8 +700,19 @@ async function runSingleRefresh(cnpj: string, certType: CertidaoTipo, userId: nu
 
   let storagePath: string | null = null;
   let fileHash: string | null = null;
-  if (normalized.pdfBase64) {
-    const stored = await savePdf(cnpj, certType, normalized.pdfBase64);
+  let pdfBase64ToStore = normalized.pdfBase64?.trim() || null;
+  if (!pdfBase64ToStore) {
+    const pdfUrlCandidates = extractPdfUrlCandidates({
+      sourceUrl: normalized.sourceUrl,
+      rawText: normalized.rawText,
+    });
+    for (const candidate of pdfUrlCandidates) {
+      pdfBase64ToStore = await downloadPdfAsBase64(candidate);
+      if (pdfBase64ToStore) break;
+    }
+  }
+  if (pdfBase64ToStore) {
+    const stored = await savePdf(cnpj, certType, pdfBase64ToStore);
     storagePath = stored.storagePath;
     fileHash = stored.fileHash;
   }
@@ -554,8 +725,8 @@ async function runSingleRefresh(cnpj: string, certType: CertidaoTipo, userId: nu
          expiry_date = $5::date,
          control_code = $6,
          source_url = $7,
-         storage_path = COALESCE($8, storage_path),
-         file_hash = COALESCE($9, file_hash),
+         storage_path = $8,
+         file_hash = $9,
          last_checked_at = NOW(),
          last_success_at = NOW(),
          last_error = NULL,

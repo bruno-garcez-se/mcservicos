@@ -33,6 +33,27 @@ const DocumentosPage = lazy(() =>
 type Tab = "senhas" | "transacional" | "financeiro" | "negocial" | "contatos" | "documentos" | "usuarios";
 const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
 const VPN_FEEDBACK_EVENT = "mc:vpn-feedback";
+const TAB_HASH_PREFIX = "#";
+
+function parseTab(value: string | null | undefined): Tab | null {
+  if (
+    value === "senhas" ||
+    value === "transacional" ||
+    value === "financeiro" ||
+    value === "negocial" ||
+    value === "contatos" ||
+    value === "documentos" ||
+    value === "usuarios"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function getTabFromHash(hash: string): Tab | null {
+  const raw = hash.startsWith(TAB_HASH_PREFIX) ? hash.slice(1) : hash;
+  return parseTab(raw);
+}
 
 type VpnStatusSyncEventDetail =
   | { kind: "status"; status: AgentVpnStatus }
@@ -147,18 +168,10 @@ export default function App() {
   const { user, loading, signOut } = useAuth();
   const [tab, setTab] = useState<Tab>(() => {
     try {
-      const saved = localStorage.getItem("portal:active-tab");
-      if (
-        saved === "senhas" ||
-        saved === "transacional" ||
-        saved === "financeiro" ||
-        saved === "negocial" ||
-        saved === "contatos" ||
-        saved === "documentos" ||
-        saved === "usuarios"
-      ) {
-        return saved;
-      }
+      const fromHash = getTabFromHash(window.location.hash);
+      if (fromHash) return fromHash;
+      const saved = parseTab(localStorage.getItem("portal:active-tab"));
+      if (saved) return saved;
     } catch {
       // Ignora erro de storage e usa padrão.
     }
@@ -187,19 +200,29 @@ export default function App() {
   const vpnFeedbackTimeoutRef = useRef<number | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const isAdmin = user?.role === "admin";
-  const roleLabel = user?.role === "admin" ? "Administrador" : "Usuário";
+  const roleLabel = user?.role === "admin" ? "Administrador" : user?.role === "observer" ? "Observador" : "Usuário";
   const userInitial = user?.name?.trim()?.charAt(0)?.toUpperCase() ?? "U";
   const menuVisibility = user?.menuVisibility ?? {
     senhas: true,
     transacional: true,
     negocial: true,
+    contatos: true,
+    negocialSections: {
+      cadastro: true,
+      funil: true,
+      agenda: true,
+      importacoes: true,
+      comissao: true,
+      relatorios: true,
+    },
   };
   const canViewSenhas = isAdmin || menuVisibility.senhas;
   const canViewTransacional = isAdmin || menuVisibility.transacional;
   const canViewNegocial = isAdmin || menuVisibility.negocial;
   const canViewFinanceiro = isAdmin;
   const canViewDocumentos = isAdmin;
-  const canViewContatos = true;
+  const canViewContatos = isAdmin || menuVisibility.contatos;
+  const negocialSectionsVisibility = menuVisibility.negocialSections;
 
   const loadVpnStatus = useCallback(async () => {
     const status = await getAgentVpnStatus();
@@ -283,6 +306,21 @@ export default function App() {
     } catch {
       // Ignora erro de storage para não bloquear a navegação.
     }
+    const nextHash = `#${tab}`;
+    if (window.location.hash !== nextHash) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+    }
+  }, [tab]);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const fromHash = getTabFromHash(window.location.hash);
+      if (fromHash && fromHash !== tab) {
+        setTab(fromHash);
+      }
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
   }, [tab]);
 
   useEffect(() => {
@@ -684,16 +722,18 @@ export default function App() {
               </span>
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() => setTab("contatos")}
-            className={`nav-tab ${tab === "contatos" ? "active" : ""}`}
-          >
-            <span className="nav-tab-icon-label">
-              <ContactsIcon />
-              <span>Contatos</span>
-            </span>
-          </button>
+          {canViewContatos ? (
+            <button
+              type="button"
+              onClick={() => setTab("contatos")}
+              className={`nav-tab ${tab === "contatos" ? "active" : ""}`}
+            >
+              <span className="nav-tab-icon-label">
+                <ContactsIcon />
+                <span>Contatos</span>
+              </span>
+            </button>
+          ) : null}
         </nav>
         <div className="topbar-right">
           <div
@@ -802,8 +842,8 @@ export default function App() {
           {tab === "senhas" && canViewSenhas ? <SenhasPage /> : null}
           {tab === "transacional" && canViewTransacional ? <TransacionalPage /> : null}
           {tab === "financeiro" && canViewFinanceiro ? <FinanceiroPage /> : null}
-          {tab === "negocial" && canViewNegocial ? <EmprestimosPage /> : null}
-          {tab === "contatos" ? <ContatosPage /> : null}
+          {tab === "negocial" && canViewNegocial ? <EmprestimosPage sectionVisibility={negocialSectionsVisibility} /> : null}
+          {tab === "contatos" && canViewContatos ? <ContatosPage /> : null}
           {tab === "documentos" && canViewDocumentos ? <DocumentosPage /> : null}
           {tab === "usuarios" && isAdmin ? <UsersPage /> : null}
         </Suspense>

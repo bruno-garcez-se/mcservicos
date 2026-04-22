@@ -1,4 +1,4 @@
-export type UserRole = "admin" | "employee";
+export type UserRole = "admin" | "employee" | "observer";
 
 export type AuthUser = {
   id: number;
@@ -8,6 +8,15 @@ export type AuthUser = {
     senhas: boolean;
     transacional: boolean;
     negocial: boolean;
+    contatos: boolean;
+    negocialSections: {
+      cadastro: boolean;
+      funil: boolean;
+      agenda: boolean;
+      importacoes: boolean;
+      comissao: boolean;
+      relatorios: boolean;
+    };
   };
 };
 
@@ -19,5 +28,14 @@ export type JwtPayload = {
     senhas: boolean;
     transacional: boolean;
     negocial: boolean;
+    contatos: boolean;
+    negocialSections: {
+      cadastro: boolean;
+      funil: boolean;
+      agenda: boolean;
+      importacoes: boolean;
+      comissao: boolean;
+      relatorios: boolean;
+    };
   };
 };

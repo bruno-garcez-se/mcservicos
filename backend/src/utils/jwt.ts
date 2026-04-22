@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { JwtPayload } from "../types/auth";
+import { normalizeMenuVisibility } from "../modules/users/userMenuVisibility";
 
 export function signAccessToken(payload: JwtPayload): string {
   return jwt.sign(payload, env.JWT_ACCESS_SECRET, { expiresIn: "15m" });
@@ -29,12 +30,18 @@ function normalizePayload(raw: string | jwt.JwtPayload): JwtPayload {
   const role = raw.role;
   const groupIds = raw.groupIds;
   const rawMenuVisibility = raw.menuVisibility as
-    | { senhas?: unknown; transacional?: unknown; negocial?: unknown }
+    | {
+        senhas?: unknown;
+        transacional?: unknown;
+        negocial?: unknown;
+        contatos?: unknown;
+        negocialSections?: unknown;
+      }
     | undefined;
 
   if (
     !Number.isInteger(sub) ||
-    (role !== "admin" && role !== "employee") ||
+    (role !== "admin" && role !== "employee" && role !== "observer") ||
     !Array.isArray(groupIds)
   ) {
     throw new Error("Claims obrigatorias ausentes no token.");
@@ -44,11 +51,12 @@ function normalizePayload(raw: string | jwt.JwtPayload): JwtPayload {
     sub,
     role,
     groupIds: groupIds.map((id) => Number(id)),
-    menuVisibility: {
-      senhas: rawMenuVisibility?.senhas === undefined ? true : Boolean(rawMenuVisibility.senhas),
-      transacional:
-        rawMenuVisibility?.transacional === undefined ? true : Boolean(rawMenuVisibility.transacional),
-      negocial: rawMenuVisibility?.negocial === undefined ? true : Boolean(rawMenuVisibility.negocial),
-    },
+    menuVisibility: normalizeMenuVisibility({
+      senhas: rawMenuVisibility?.senhas,
+      transacional: rawMenuVisibility?.transacional,
+      negocial: rawMenuVisibility?.negocial,
+      contatos: rawMenuVisibility?.contatos,
+      negocialSections: rawMenuVisibility?.negocialSections,
+    }),
   };
 }

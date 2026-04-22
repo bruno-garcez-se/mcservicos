@@ -55,3 +55,12 @@ export function extractControlCodeByLabel(rawText: string | null | undefined, la
   );
   return fallback?.[2]?.trim() || null;
 }
+
+export function extractDatesInText(rawText: string | null | undefined): string[] {
+  if (!rawText) return [];
+  const matches = rawText.match(/\b\d{2}\/\d{2}\/\d{4}\b/g) ?? [];
+  const unique = Array.from(new Set(matches));
+  return unique
+    .map((item) => parsePtBrDate(item))
+    .filter((item): item is string => Boolean(item));
+}

@@ -1793,6 +1793,20 @@ fieldset {
   font-weight: 600;
 }
 
+.documentos-certidoes-group-row {
+  background: linear-gradient(90deg, #dcecff 0%, #edf5ff 100%);
+  color: #1c4674;
+  font-weight: 700;
+  text-align: left;
+  padding-left: 12px;
+  border-top: 1px solid #bfd7f3;
+  border-bottom: 1px solid #bfd7f3;
+}
+
+.transaction-data-table td.documentos-certidoes-group-row {
+  text-align: left !important;
+}
+
 .documentos-manual-note {
   display: inline-block;
   margin-top: 4px;
@@ -3016,6 +3030,19 @@ fieldset {
   padding-inline: 12px;
 }
 
+.loan-funil-search-input,
+.loan-funil-month-select {
+  width: 50%;
+  min-width: 0;
+}
+
+.loan-funil-clear-button {
+  min-width: 46px;
+  width: 50%;
+  padding-inline: 8px;
+  justify-self: start;
+}
+
 .loan-heat-legend {
   display: inline-flex;
   align-items: center;
@@ -3896,6 +3923,13 @@ textarea {
     justify-self: start;
     flex-wrap: wrap;
   }
+
+  .loan-funil-search-input,
+  .loan-funil-month-select,
+  .loan-funil-clear-button {
+    width: 100%;
+    min-width: 100%;
+  }
 }
 
 .transaction-page {
@@ -4114,6 +4148,25 @@ textarea {
 .transaction-icon-button:hover {
   background: #eaf2ff;
   border-color: #a9c6e8;
+}
+
+.transaction-icon-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.documentos-refresh-icon-spinning {
+  animation: documentos-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes documentos-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .transaction-icon-button.danger {

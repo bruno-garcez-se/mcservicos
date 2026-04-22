@@ -10,7 +10,7 @@ import {
   verifyRefreshToken,
 } from "../../utils/jwt";
 import { createAuditLog } from "../audit/audit.service";
-import { ensureUserMenuVisibilityColumns } from "../users/userMenuVisibility";
+import { ensureUserMenuVisibilityColumns, normalizeMenuVisibility } from "../users/userMenuVisibility";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -44,7 +44,7 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
   const body = loginSchema.parse(req.body);
 
   const userResult = await pool.query(
-    `SELECT id, name, email, password_hash, role, active, can_view_senhas, can_view_transacional, can_view_negocial
+    `SELECT id, name, email, password_hash, role, active, can_view_senhas, can_view_transacional, can_view_negocial, can_view_contatos, can_view_negocial_sections
      FROM users
      WHERE email = $1
      LIMIT 1`,
@@ -57,11 +57,13 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
         name: string;
         email: string;
         password_hash: string;
-        role: "admin" | "employee";
+        role: "admin" | "employee" | "observer";
         active: boolean;
         can_view_senhas: boolean;
         can_view_transacional: boolean;
         can_view_negocial: boolean;
+        can_view_contatos: boolean;
+        can_view_negocial_sections: unknown;
       }
     | undefined;
 
@@ -84,15 +86,19 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
   );
   const groupIds = groupsResult.rows.map((row) => Number(row.group_id));
 
+  const menuVisibility = normalizeMenuVisibility({
+    senhas: user.can_view_senhas,
+    transacional: user.can_view_transacional,
+    negocial: user.can_view_negocial,
+    contatos: user.can_view_contatos,
+    negocialSections: user.can_view_negocial_sections,
+  });
+
   const payload = {
     sub: user.id,
     role: user.role,
     groupIds,
-    menuVisibility: {
-      senhas: Boolean(user.can_view_senhas),
-      transacional: Boolean(user.can_view_transacional),
-      negocial: Boolean(user.can_view_negocial),
-    },
+    menuVisibility,
   } as const;
 
   const accessToken = signAccessToken(payload);
@@ -117,11 +123,7 @@ authRouter.post("/login", authRateLimit, async (req, res) => {
       email: user.email,
       role: user.role,
       groupIds,
-      menuVisibility: {
-        senhas: Boolean(user.can_view_senhas),
-        transacional: Boolean(user.can_view_transacional),
-        negocial: Boolean(user.can_view_negocial),
-      },
+      menuVisibility,
     },
   });
 });
@@ -170,7 +172,7 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   await ensureUserMenuVisibilityColumns();
   const user = req.user!;
   const result = await pool.query(
-    `SELECT id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial
+    `SELECT id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, can_view_contatos, can_view_negocial_sections
      FROM users
      WHERE id = $1
      LIMIT 1`,
@@ -181,11 +183,13 @@ authRouter.get("/me", requireAuth, async (req, res) => {
         id: number;
         name: string;
         email: string;
-        role: "admin" | "employee";
+        role: "admin" | "employee" | "observer";
         active: boolean;
         can_view_senhas: boolean;
         can_view_transacional: boolean;
         can_view_negocial: boolean;
+        can_view_contatos: boolean;
+        can_view_negocial_sections: unknown;
       }
     | undefined;
 
@@ -202,17 +206,21 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   );
   const groupIds = groupsResult.rows.map((row) => Number(row.group_id));
 
+  const menuVisibility = normalizeMenuVisibility({
+    senhas: me.can_view_senhas,
+    transacional: me.can_view_transacional,
+    negocial: me.can_view_negocial,
+    contatos: me.can_view_contatos,
+    negocialSections: me.can_view_negocial_sections,
+  });
+
   res.json({
     id: me.id,
     name: me.name,
     email: me.email,
     role: me.role,
     groupIds,
-    menuVisibility: {
-      senhas: Boolean(me.can_view_senhas),
-      transacional: Boolean(me.can_view_transacional),
-      negocial: Boolean(me.can_view_negocial),
-    },
+    menuVisibility,
   });
 });
 

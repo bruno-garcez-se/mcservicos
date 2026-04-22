@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, Fragment, useEffect, useMemo, useState } from "react";
 import {
   DocumentNfseDraft,
   DocumentNfseTemplateKey,
@@ -32,13 +32,21 @@ const CERT_LABELS: Record<DocumentCertidaoTipo, string> = {
   CNDT: "CNDT - TST - CERTIDÃO NEGATIVA DE DÉBITOS TRABALHISTAS",
   CNF: "CNF - CERTIDÃO NEGATIVA DÉBITOS TRIBUTOS FEDERAIS E DIVIDA ATIVA UNIÃO",
   CRF: "CRF - FGTS - CERTIFICADO DE REGULARIDADE DO FGTS",
+  CNDM: "CNDM - MUNICIPAL - CERTIDÃO NEGATIVA DE DÉBITOS TRIBUTÁRIOS MUNICIPAIS",
+  CNDE: "CNDE - ESTADUAL - CERTIDÃO NEGATIVA DE DÉBITOS ESTADUAIS",
+  CNDJ: "CNDJ - JUDICIAL CÍVEL - CERTIDÃO JUDICIAL (NADA CONSTA)",
 };
 
 const CERT_PORTAL_URL: Record<DocumentCertidaoTipo, string> = {
   CNDT: "https://cndt-certidao.tst.jus.br/inicio.faces",
   CNF: "https://solucoes.receita.fazenda.gov.br/Servicos/certidao/",
   CRF: "https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf",
+  CNDM: "https://gestor.tributosmunicipais.com.br/redesim/prefeitura/socorro/views/publico/portaldocontribuinte/publico/autenticacao/autenticacao.xhtml",
+  CNDE: "https://www.sefaz.se.gov.br/SitePages/servico.aspx?cod=12",
+  CNDJ: "https://www.tjse.jus.br/portal/servicos/judicial/certidao-online",
 };
+const PRIMARY_CERT_TYPES: DocumentCertidaoTipo[] = ["CNDT", "CNF", "CRF"];
+const AUTO_REFRESH_CERT_TYPES = new Set<DocumentCertidaoTipo>(["CNDT", "CNF", "CRF"]);
 
 const MONTHLY_OBLIGATION_LABELS: Record<DocumentMonthlyObligationType, string> = {
   SIMPLES: "Simples Nacional",
@@ -142,9 +150,9 @@ function RegisterIcon() {
   );
 }
 
-function RefreshIcon() {
+function RefreshIcon(props: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={props.className}>
       <path
         d="M20 6v5h-5M4 18v-5h5"
         fill="none"
@@ -427,6 +435,7 @@ export function DocumentosPage() {
   const [loading, setLoading] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshingLabel, setRefreshingLabel] = useState("");
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualCertType, setManualCertType] = useState<DocumentCertidaoTipo>("CRF");
   const [manualIssueDate, setManualIssueDate] = useState("");
@@ -495,6 +504,14 @@ export function DocumentosPage() {
 
   const certificateExpiryInfo = useMemo(() => computeCertificateExpiryInfo(certificateExpiresAt || null), [certificateExpiresAt]);
   const certificateExpiryTone = useMemo(() => computeCertificateExpiryTone(certificateExpiresAt || null), [certificateExpiresAt]);
+  const primaryCertidoes = useMemo(
+    () => PRIMARY_CERT_TYPES.map((certType) => certidoes.find((item) => item.certType === certType)).filter((item): item is DocumentCertidao => Boolean(item)),
+    [certidoes],
+  );
+  const otherCertidoes = useMemo(
+    () => certidoes.filter((item) => !PRIMARY_CERT_TYPES.includes(item.certType)),
+    [certidoes],
+  );
   const latestMonthlyByType = useMemo(() => {
     const map: Record<DocumentMonthlyObligationType, DocumentMonthlyObligation | null> = {
       SIMPLES: null,
@@ -972,15 +989,19 @@ export function DocumentosPage() {
       return;
     }
     const targetTypes = certTypes && certTypes.length > 0 ? certTypes : undefined;
+    const targetLabel = targetTypes?.length ? targetTypes.join(", ") : "CNDT, CNF e CRF";
     setRefreshing(true);
+    setRefreshingLabel(targetLabel);
+    setMessage(`Atualizando ${targetLabel}... aguarde.`);
     try {
       const data = await refreshCertidoes({ cnpj: normalized, certTypes: targetTypes });
       setCertidoes(data.items);
-      setMessage("Atualização manual concluída. Créditos consumidos conforme as certidões consultadas.");
+      setMessage(`Atualização concluída (${targetLabel}). Créditos consumidos conforme as certidões consultadas.`);
     } catch {
       setMessage("Falha ao atualizar certidões.");
     } finally {
       setRefreshing(false);
+      setRefreshingLabel("");
     }
   };
 
@@ -1205,6 +1226,7 @@ export function DocumentosPage() {
                 {certificateExpiresAt ? certificateExpiryInfo : "Sem certificado cadastrado."}
               </span>
             </div>
+            {refreshing ? <p className="muted-text">{`Consultando ${refreshingLabel}...`}</p> : null}
             <table className="transaction-data-table">
               <thead>
                 <tr>
@@ -1227,7 +1249,15 @@ export function DocumentosPage() {
                     <td colSpan={7}>Informe o CNPJ para carregar as certidões.</td>
                   </tr>
                 ) : (
-                  certidoes.map((item) => (
+                  [...primaryCertidoes, ...otherCertidoes].map((item, index) => (
+                    <Fragment key={`cert-fragment-${item.certType}-${index}`}>
+                    {index === primaryCertidoes.length && otherCertidoes.length > 0 ? (
+                      <tr key="cert-outros-header">
+                        <td colSpan={7} className="documentos-certidoes-group-row">
+                          Outras certidões
+                        </td>
+                      </tr>
+                    ) : null}
                     <tr key={`cert-${item.certType}`}>
                       <td>{CERT_LABELS[item.certType]}</td>
                       <td>{item.controlCode ?? "-"}</td>
@@ -1241,10 +1271,17 @@ export function DocumentosPage() {
                             type="button"
                             className="transaction-icon-button"
                             onClick={() => void onRefresh([item.certType])}
-                            aria-label="Atualizar"
-                            title="Atualizar"
+                            disabled={refreshing || !AUTO_REFRESH_CERT_TYPES.has(item.certType)}
+                            aria-label={refreshing ? "Atualizando" : "Atualizar"}
+                            title={
+                              AUTO_REFRESH_CERT_TYPES.has(item.certType)
+                                ? refreshing
+                                  ? "Atualizando..."
+                                  : "Atualizar"
+                                : "Atualização automática indisponível para este tipo"
+                            }
                           >
-                            <RefreshIcon />
+                            <RefreshIcon className={refreshing ? "documentos-refresh-icon-spinning" : undefined} />
                           </button>
                           <button
                             type="button"
@@ -1272,6 +1309,9 @@ export function DocumentosPage() {
                           </button>
                         </div>
                         {item.lastError ? <small className="error-text">{normalizeCertErrorMessage(item.lastError)}</small> : null}
+                        {!AUTO_REFRESH_CERT_TYPES.has(item.certType) ? (
+                          <small className="muted-text">Atualização manual: use Registrar para anexar a certidão.</small>
+                        ) : null}
                         {item.certType === "CRF" && isCrfPortalBlockedError(item.lastError) ? (
                           <button
                             type="button"
@@ -1283,6 +1323,7 @@ export function DocumentosPage() {
                         ) : null}
                       </td>
                     </tr>
+                    </Fragment>
                   ))
                 )}
               </tbody>

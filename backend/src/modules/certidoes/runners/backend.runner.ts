@@ -139,8 +139,13 @@ async function fetchFromInfoSimples(input: CertidoesRunnerInput): Promise<Certid
       cnpj: input.cnpj,
       preferencia_emissao: "2via",
     });
-  } else {
+  } else if (input.certType === "CRF") {
     responseUnknown = await client.caixa.regularidadeEmpregador({ cnpj: input.cnpj });
+  } else {
+    return {
+      ok: false,
+      errorMessage: "Tipo de certidão sem integração automática via InfoSimples.",
+    };
   }
 
   const response = asRecord(responseUnknown);
@@ -172,7 +177,13 @@ async function fetchFromInfoSimples(input: CertidoesRunnerInput): Promise<Certid
     "control_code",
     "codigo_controle",
     "certidao_codigo",
+    "certidao_numero",
     "numero_certidao",
+    "numero_da_certidao",
+    "numero_do_certificado",
+    "numero_crf",
+    "crf_numero",
+    "crf",
     "numero",
   ]);
   const sourceUrl = pickString(dataRow, ["source_url", "url", "consulta_url"]);
@@ -389,6 +400,13 @@ async function fetchCrfWithPlaywright(cnpj: string): Promise<CertidaoProviderPay
 
 export class BackendRunner implements CertidoesRunner {
   async execute(input: CertidoesRunnerInput): Promise<CertidaoProviderPayload> {
+    const supportsAuto = input.certType === "CNDT" || input.certType === "CNF" || input.certType === "CRF";
+    if (!supportsAuto) {
+      return {
+        ok: false,
+        errorMessage: "Tipo de certidão com atualização manual (sem consulta automática).",
+      };
+    }
     const mockEnabled = process.env.CERTIDOES_MOCK_MODE === "true";
     const hasInfosimplesToken = (process.env.CERTIDOES_INFOSIMPLES_TOKEN || "").trim().length > 0;
     if (mockEnabled) {

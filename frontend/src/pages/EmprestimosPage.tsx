@@ -16,6 +16,7 @@ import {
   completeLoanAgendaItem,
   getLoanClientById,
   getLoanDashboard,
+  getLoanFunnelOutcomeReport,
   getLoanSettings,
   getProgressoImportacaoServidores,
   importarServidoresPortal,
@@ -36,7 +37,32 @@ import {
   updateLoanClientStatus,
   rescheduleLoanAgendaItem,
 } from "../services/loansApi";
-import { ImportedServant, LoanAgendaItem, LoanClient, LoanClientStatus, LoanProductType } from "../types";
+import {
+  ImportedServant,
+  LoanAgendaItem,
+  LoanClient,
+  LoanClientStatus,
+  LoanFunnelOutcomeReport,
+  LoanProductType,
+} from "../types";
+
+type NegocialSectionVisibility = {
+  cadastro: boolean;
+  funil: boolean;
+  agenda: boolean;
+  importacoes: boolean;
+  comissao: boolean;
+  relatorios: boolean;
+};
+
+const DEFAULT_NEGOCIAL_SECTION_VISIBILITY: NegocialSectionVisibility = {
+  cadastro: true,
+  funil: true,
+  agenda: true,
+  importacoes: true,
+  comissao: true,
+  relatorios: true,
+};
 
 const statusFlow: Array<{ key: LoanClientStatus; label: string }> = [
   { key: "novo", label: "Novo" },
@@ -383,6 +409,17 @@ function MenuComissaoIcon() {
   );
 }
 
+function MenuRelatoriosIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M5 3a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9.4a2 2 0 0 0-.58-1.41l-3.4-3.41A2 2 0 0 0 15.6 4H5Zm10 .6V7a1 1 0 0 0 1 1h3.4L15 3.6Zm-7 7.4a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Zm0 4a1 1 0 0 1 1-1h6a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Zm0 4a1 1 0 0 1 1-1h3a1 1 0 1 1 0 2H9a1 1 0 0 1-1-1Z"
+      />
+    </svg>
+  );
+}
+
 function EmptyStageIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -422,7 +459,7 @@ const LEAD_SOURCES_STORAGE_KEY = "mcservicos_lead_sources";
 const CONVENIOS_STORAGE_KEY = "mcservicos_convenios";
 const LOAN_VIEW_CACHE_TTL_MS = 15000;
 
-export function EmprestimosPage() {
+export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisibility }) {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
 
@@ -486,9 +523,38 @@ export function EmprestimosPage() {
   >([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const resolvedSectionVisibility = {
+    ...DEFAULT_NEGOCIAL_SECTION_VISIBILITY,
+    ...(props.sectionVisibility ?? {}),
+  };
+  const availableSections = (
+    ["cadastro", "funil", "agenda", "importacoes", "comissao", "relatorios"] as const
+  ).filter((section) => resolvedSectionVisibility[section]);
+  const defaultSection = (availableSections[0] ?? "funil") as
+    | "cadastro"
+    | "funil"
+    | "agenda"
+    | "importacoes"
+    | "comissao"
+    | "relatorios";
   const [loanSection, setLoanSection] = useState<
-    "cadastro" | "funil" | "agenda" | "importacoes" | "comissao"
-  >("funil");
+    "cadastro" | "funil" | "agenda" | "importacoes" | "comissao" | "relatorios"
+  >(defaultSection);
+
+  useEffect(() => {
+    if (!resolvedSectionVisibility[loanSection]) {
+      setLoanSection(defaultSection);
+    }
+  }, [
+    defaultSection,
+    loanSection,
+    resolvedSectionVisibility.agenda,
+    resolvedSectionVisibility.cadastro,
+    resolvedSectionVisibility.comissao,
+    resolvedSectionVisibility.funil,
+    resolvedSectionVisibility.importacoes,
+    resolvedSectionVisibility.relatorios,
+  ]);
 
   const [clientForm, setClientForm] = useState({
     name: "",
@@ -540,6 +606,7 @@ export function EmprestimosPage() {
   const [isHeatBadgeMenuOpen, setIsHeatBadgeMenuOpen] = useState(false);
   const [isLostReasonModalOpen, setIsLostReasonModalOpen] = useState(false);
   const [lostReasonText, setLostReasonText] = useState("");
+  const [lostHasMargin, setLostHasMargin] = useState<"" | "sim" | "nao">("");
   const [isSummaryEditing, setIsSummaryEditing] = useState(false);
   const [summaryOverrides, setSummaryOverrides] = useState<Record<number, { simulation: string; product: string }>>(() => {
     try {
@@ -698,6 +765,7 @@ export function EmprestimosPage() {
           profession: "",
           convenio: "",
           status: "",
+          source: "",
           vendedorId: "",
           sortBy: "updatedAt" as CadastroSortBy,
           sortDir: "desc" as SortDir,
@@ -710,6 +778,7 @@ export function EmprestimosPage() {
         profession?: string;
         convenio?: string;
         status?: string;
+        source?: string;
         vendedorId?: string;
         sortBy?: string;
         sortDir?: string;
@@ -733,6 +802,7 @@ export function EmprestimosPage() {
         profession: typeof parsed.profession === "string" ? parsed.profession : "",
         convenio: typeof parsed.convenio === "string" ? parsed.convenio : "",
         status: typeof parsed.status === "string" ? parsed.status : "",
+        source: typeof parsed.source === "string" ? parsed.source : "",
         vendedorId: typeof parsed.vendedorId === "string" ? parsed.vendedorId : "",
         sortBy,
         sortDir,
@@ -745,6 +815,7 @@ export function EmprestimosPage() {
         profession: "",
         convenio: "",
         status: "",
+        source: "",
         vendedorId: "",
         sortBy: "updatedAt" as CadastroSortBy,
         sortDir: "desc" as SortDir,
@@ -795,8 +866,14 @@ export function EmprestimosPage() {
   const [clientesFiltro, setClientesFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(KANBAN_FILTERS_STORAGE_KEY);
-      if (!raw) return { busca: "", status: "", vendedorId: defaultSellerFilter, monthRef: "" };
-      const parsed = JSON.parse(raw) as { busca?: string; status?: string; vendedorId?: string; monthRef?: string };
+      if (!raw) return { busca: "", status: "", source: "", vendedorId: defaultSellerFilter, monthRef: "" };
+      const parsed = JSON.parse(raw) as {
+        busca?: string;
+        status?: string;
+        source?: string;
+        vendedorId?: string;
+        monthRef?: string;
+      };
       const vendedorId =
         isAdmin
           ? ""
@@ -806,13 +883,33 @@ export function EmprestimosPage() {
       return {
         busca: typeof parsed.busca === "string" ? parsed.busca : "",
         status: typeof parsed.status === "string" ? parsed.status : "",
+        source: typeof parsed.source === "string" ? parsed.source : "",
         vendedorId,
         monthRef: typeof parsed.monthRef === "string" ? parsed.monthRef : "",
       };
     } catch {
-      return { busca: "", status: "", vendedorId: defaultSellerFilter, monthRef: "" };
+      return { busca: "", status: "", source: "", vendedorId: defaultSellerFilter, monthRef: "" };
     }
   });
+  const [relatoriosFiltro, setRelatoriosFiltro] = useState<{
+    monthRef: string;
+    busca: string;
+    hasMargin: "" | "sim" | "nao";
+    status: "" | "ganho" | "perdido";
+    vendedorId: string;
+    convenio: string;
+    source: string;
+  }>({
+    monthRef: "",
+    busca: "",
+    hasMargin: "",
+    status: "",
+    vendedorId: "",
+    convenio: "",
+    source: "",
+  });
+  const [funnelOutcomeReport, setFunnelOutcomeReport] = useState<LoanFunnelOutcomeReport | null>(null);
+  const [funnelOutcomeReportLoading, setFunnelOutcomeReportLoading] = useState(false);
   const [servidoresFiltro, setServidoresFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(SERVIDORES_FILTERS_STORAGE_KEY);
@@ -926,6 +1023,7 @@ export function EmprestimosPage() {
         search: debouncedKanbanSearch.trim() || undefined,
         monthRef: /^\d{4}-\d{2}$/.test(clientesFiltro.monthRef) ? clientesFiltro.monthRef : undefined,
         status: statusNormalizado,
+        source: clientesFiltro.source.trim() || undefined,
         assignedUserId: Number(clientesFiltro.vendedorId) || undefined,
         page: clientesPaginacao.page,
         limit: clientesPaginacao.pageSize,
@@ -935,6 +1033,7 @@ export function EmprestimosPage() {
       debouncedKanbanSearch,
       clientesFiltro.monthRef,
       clientesFiltro.status,
+      clientesFiltro.source,
       clientesFiltro.vendedorId,
       clientesPaginacao.page,
       clientesPaginacao.pageSize,
@@ -978,6 +1077,7 @@ export function EmprestimosPage() {
         : undefined;
       return {
         search: debouncedCadastroSearch.trim() || undefined,
+        source: cadastroFiltro.source.trim() || undefined,
         assignedUserId: Number(cadastroFiltro.vendedorId) || undefined,
         status: statusNormalizado,
         sortBy: cadastroFiltro.sortBy,
@@ -988,6 +1088,7 @@ export function EmprestimosPage() {
     },
     [
       debouncedCadastroSearch,
+      cadastroFiltro.source,
       cadastroFiltro.vendedorId,
       cadastroFiltro.status,
       cadastroFiltro.sortBy,
@@ -1001,14 +1102,23 @@ export function EmprestimosPage() {
     const cityTerm = cadastroFiltro.city.trim().toLowerCase();
     const professionTerm = cadastroFiltro.profession.trim().toLowerCase();
     const convenioTerm = cadastroFiltro.convenio.trim().toLowerCase();
+    const sourceTerm = cadastroFiltro.source.trim().toLowerCase();
     return cadastroClientes.filter((client) => {
       const matchesCpf = !cpfTerm || client.cpf.toLowerCase().includes(cpfTerm);
       const matchesCity = !cityTerm || client.city.toLowerCase().includes(cityTerm);
       const matchesProfession = !professionTerm || client.profession.toLowerCase().includes(professionTerm);
       const matchesConvenio = !convenioTerm || client.convenio.toLowerCase().includes(convenioTerm);
-      return matchesCpf && matchesCity && matchesProfession && matchesConvenio;
+      const matchesSource = !sourceTerm || (client.source ?? "").toLowerCase().includes(sourceTerm);
+      return matchesCpf && matchesCity && matchesProfession && matchesConvenio && matchesSource;
     });
-  }, [cadastroClientes, cadastroFiltro.cpf, cadastroFiltro.city, cadastroFiltro.profession, cadastroFiltro.convenio]);
+  }, [
+    cadastroClientes,
+    cadastroFiltro.cpf,
+    cadastroFiltro.city,
+    cadastroFiltro.profession,
+    cadastroFiltro.convenio,
+    cadastroFiltro.source,
+  ]);
 
   const selectedClient = useMemo(
     () => clients.find((item) => item.id === selectedClientId) ?? null,
@@ -1268,6 +1378,7 @@ export function EmprestimosPage() {
           search: clientesQuery.search,
           monthRef: clientesQuery.monthRef,
           status: clientesQuery.status,
+          source: clientesQuery.source,
           assignedUserId: clientesQuery.assignedUserId,
           page: clientesQuery.page,
           limit: clientesQuery.limit,
@@ -1295,8 +1406,9 @@ export function EmprestimosPage() {
             try {
               const result = await listLoanClients({
                 search: clientesQuery.search,
-              monthRef: clientesQuery.monthRef,
+                monthRef: clientesQuery.monthRef,
                 status: column.key,
+                source: clientesQuery.source,
                 assignedUserId: clientesQuery.assignedUserId,
                 page: 1,
                 limit: clientesQuery.limit,
@@ -1353,6 +1465,7 @@ export function EmprestimosPage() {
     try {
       const response = await listLoanClients({
         search: cadastroQuery.search,
+        source: cadastroQuery.source,
         assignedUserId: cadastroQuery.assignedUserId,
         status: cadastroQuery.status,
         sortBy: cadastroQuery.sortBy,
@@ -1374,6 +1487,20 @@ export function EmprestimosPage() {
       });
     } catch {
       setMessage("Falha ao carregar cadastro de clientes.");
+    }
+  }
+
+  async function loadFunnelOutcomeReportData(): Promise<void> {
+    setFunnelOutcomeReportLoading(true);
+    try {
+      const data = await getLoanFunnelOutcomeReport({
+        monthRef: /^\d{4}-\d{2}$/.test(relatoriosFiltro.monthRef) ? relatoriosFiltro.monthRef : undefined,
+      });
+      setFunnelOutcomeReport(data);
+    } catch {
+      setMessage("Falha ao carregar relatórios do funil.");
+    } finally {
+      setFunnelOutcomeReportLoading(false);
     }
   }
 
@@ -1486,6 +1613,11 @@ export function EmprestimosPage() {
   }, [cadastroQuery, loading]);
 
   useEffect(() => {
+    if (loading || loanSection !== "relatorios") return;
+    void loadFunnelOutcomeReportData();
+  }, [loanSection, relatoriosFiltro.monthRef, loading]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(
         KANBAN_FILTERS_STORAGE_KEY,
@@ -1493,6 +1625,7 @@ export function EmprestimosPage() {
           busca: clientesFiltro.busca,
           monthRef: clientesFiltro.monthRef,
           status: clientesFiltro.status,
+          source: clientesFiltro.source,
           vendedorId: clientesFiltro.vendedorId,
           pageSize: clientesPaginacao.pageSize,
         }),
@@ -1504,6 +1637,7 @@ export function EmprestimosPage() {
     clientesFiltro.busca,
     clientesFiltro.monthRef,
     clientesFiltro.status,
+    clientesFiltro.source,
     clientesFiltro.vendedorId,
     clientesPaginacao.pageSize,
   ]);
@@ -1519,6 +1653,7 @@ export function EmprestimosPage() {
           profession: cadastroFiltro.profession,
           convenio: cadastroFiltro.convenio,
           status: cadastroFiltro.status,
+          source: cadastroFiltro.source,
           vendedorId: cadastroFiltro.vendedorId,
           sortBy: cadastroFiltro.sortBy,
           sortDir: cadastroFiltro.sortDir,
@@ -1535,6 +1670,7 @@ export function EmprestimosPage() {
     cadastroFiltro.profession,
     cadastroFiltro.convenio,
     cadastroFiltro.status,
+    cadastroFiltro.source,
     cadastroFiltro.vendedorId,
     cadastroFiltro.sortBy,
     cadastroFiltro.sortDir,
@@ -2455,6 +2591,7 @@ export function EmprestimosPage() {
   };
   const onOpenLostReasonModal = () => {
     setLostReasonText("");
+    setLostHasMargin("");
     setIsLostReasonModalOpen(true);
   };
 
@@ -2464,10 +2601,20 @@ export function EmprestimosPage() {
       setMessage("Informe o motivo da perda.");
       return;
     }
+    if (!lostHasMargin) {
+      setMessage("Informe se o cliente possui margem.");
+      return;
+    }
     try {
       setIsLostReasonModalOpen(false);
-      await onMoveClientToStatus(selectedClient, "perdido", lostReasonText);
+      const marginLabel = lostHasMargin === "sim" ? "Sim" : "Não";
+      await onMoveClientToStatus(
+        selectedClient,
+        "perdido",
+        `${lostReasonText.trim()} | Possui margem: ${marginLabel}`,
+      );
       setLostReasonText("");
+      setLostHasMargin("");
     } catch {
       setMessage("Não foi possível concluir a perda.");
     }
@@ -2683,6 +2830,106 @@ export function EmprestimosPage() {
     return cadastroFiltro.sortDir === "asc" ? "↑" : "↓";
   };
 
+  const onExportFunnelOutcomeReport = () => {
+    if (!funnelOutcomeReport || filteredFunnelOutcomeReportItems.length === 0) {
+      setMessage("Não há dados no relatório para exportar.");
+      return;
+    }
+
+    const resumoRows: Array<Array<string | number>> = [
+      ["Relatório do Funil - Ganho e Perda"],
+      ["Gerado em", new Date(funnelOutcomeReport.generatedAt).toLocaleString("pt-BR")],
+      ["Competência", funnelOutcomeReport.monthRef ? monthRefLabel(funnelOutcomeReport.monthRef) : "Todas"],
+      ["Total", filteredFunnelOutcomeTotals.total],
+      ["Ganhos", filteredFunnelOutcomeTotals.ganho],
+      ["Perdas", filteredFunnelOutcomeTotals.perdido],
+    ];
+
+    const detailsRows = filteredFunnelOutcomeReportItems.map((item) => ({
+      Status: item.status === "ganho" ? "Ganho" : "Perdido",
+      Nome: item.name,
+      CPF: item.cpf,
+      Telefones: item.phones.length > 0 ? item.phones.join(", ") : "",
+      Cidade: item.city ?? "",
+      Profissao: item.profession ?? "",
+      Convenio: item.convenio ?? "",
+      Renda: Number(item.income ?? 0),
+      Origem: item.source ?? "",
+      Vendedor: item.assignedUserName ?? "",
+      AtualizadoEm: item.updatedAt ? new Date(item.updatedAt).toLocaleString("pt-BR") : "",
+      PossuiMargem: item.lostHasMargin === null ? "" : item.lostHasMargin ? "Sim" : "Não",
+      MotivoPerda: item.lostReason ?? "",
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const resumoSheet = XLSX.utils.aoa_to_sheet(resumoRows);
+    const detailsSheet = XLSX.utils.json_to_sheet(detailsRows);
+    XLSX.utils.book_append_sheet(workbook, resumoSheet, "Resumo");
+    XLSX.utils.book_append_sheet(workbook, detailsSheet, "Detalhes");
+
+    const today = new Date();
+    const dateToken = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+    const monthToken = funnelOutcomeReport.monthRef ?? "geral";
+    XLSX.writeFile(workbook, `relatorio-funil-${monthToken}-${dateToken}.xlsx`);
+    setMessage("Relatório exportado em Excel.");
+  };
+
+  const filteredFunnelOutcomeReportItems = useMemo(() => {
+    const items = funnelOutcomeReport?.items ?? [];
+    const busca = relatoriosFiltro.busca.trim().toLowerCase();
+    const buscaCpfDigits = relatoriosFiltro.busca.replace(/\D/g, "");
+    const statusFilter = relatoriosFiltro.status;
+    const hasMarginFilter = relatoriosFiltro.hasMargin;
+    const convenioFilter = relatoriosFiltro.convenio.trim().toLowerCase();
+    const sourceFilter = relatoriosFiltro.source.trim().toLowerCase();
+    const selectedSellerName =
+      relatoriosFiltro.vendedorId && sellerOptions.some((seller) => String(seller.id) === relatoriosFiltro.vendedorId)
+        ? (sellerOptions.find((seller) => String(seller.id) === relatoriosFiltro.vendedorId)?.name ?? "").toLowerCase()
+        : "";
+
+    return items.filter((item) => {
+      const itemName = (item.name ?? "").toLowerCase();
+      const itemCpf = (item.cpf ?? "").toLowerCase();
+      const itemCpfDigits = item.cpf.replace(/\D/g, "");
+      const itemSeller = (item.assignedUserName ?? "").toLowerCase();
+      const itemConvenio = (item.convenio ?? "").toLowerCase();
+      const itemSource = (item.source ?? "").toLowerCase();
+
+      const matchesBusca =
+        !busca ||
+        itemName.includes(busca) ||
+        itemCpf.includes(busca) ||
+        (buscaCpfDigits.length > 0 && itemCpfDigits.includes(buscaCpfDigits));
+      const matchesStatus = !statusFilter || item.status === statusFilter;
+      const matchesSeller = !selectedSellerName || itemSeller === selectedSellerName;
+      const matchesConvenio = !convenioFilter || itemConvenio.includes(convenioFilter);
+      const matchesSource = !sourceFilter || itemSource.includes(sourceFilter);
+      const matchesMargin =
+        !hasMarginFilter ||
+        (hasMarginFilter === "sim" && item.lostHasMargin === true) ||
+        (hasMarginFilter === "nao" && item.lostHasMargin === false);
+
+      return (
+        matchesBusca &&
+        matchesStatus &&
+        matchesSeller &&
+        matchesConvenio &&
+        matchesSource &&
+        matchesMargin
+      );
+    });
+  }, [funnelOutcomeReport, relatoriosFiltro, sellerOptions]);
+
+  const filteredFunnelOutcomeTotals = useMemo(() => {
+    const ganho = filteredFunnelOutcomeReportItems.filter((item) => item.status === "ganho").length;
+    const perdido = filteredFunnelOutcomeReportItems.filter((item) => item.status === "perdido").length;
+    return {
+      ganho,
+      perdido,
+      total: filteredFunnelOutcomeReportItems.length,
+    };
+  }, [filteredFunnelOutcomeReportItems]);
+
   if (loading) return <p>Carregando CRM de empréstimos...</p>;
   const progressoImportacaoPercentual =
     servidoresImportJob && servidoresImportJob.estimadoTotal > 0
@@ -2721,66 +2968,94 @@ export function EmprestimosPage() {
   return (
     <div className="loan-page">
       <section className="loan-subbar loan-section-menu">
-        <button
-          type="button"
-          className={loanSection === "cadastro" ? "active" : ""}
-          onClick={() => {
-            setLoanSection("cadastro");
-            setIsImportMenuOpen(false);
-          }}
-        >
-          <span className="loan-menu-icon-label">
-            <MenuCadastroIcon />
-            <span>Cadastro</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className={loanSection === "funil" ? "active" : ""}
-          onClick={() => {
-            setLoanSection("funil");
-            setIsImportMenuOpen(false);
-          }}
-        >
-          <span className="loan-menu-icon-label">
-            <MenuFunilIcon />
-            <span>Funil de Vendas</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className={loanSection === "agenda" ? "active" : ""}
-          onClick={() => {
-            setLoanSection("agenda");
-            setIsImportMenuOpen(false);
-          }}
-        >
-          <span className="loan-menu-icon-label">
-            <MenuAgendaIcon />
-            <span>Agenda</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className={loanSection === "importacoes" ? "active" : ""}
-          onClick={() => setLoanSection("importacoes")}
-        >
-          <span className="loan-menu-icon-label">
-            <MenuImportIcon />
-            <span>Importações</span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className={loanSection === "comissao" ? "active" : ""}
-          onClick={() => setLoanSection("comissao")}
-        >
-          <span className="loan-menu-icon-label">
-            <MenuComissaoIcon />
-            <span>Comissões</span>
-          </span>
-        </button>
+        {resolvedSectionVisibility.cadastro ? (
+          <button
+            type="button"
+            className={loanSection === "cadastro" ? "active" : ""}
+            onClick={() => {
+              setLoanSection("cadastro");
+              setIsImportMenuOpen(false);
+            }}
+          >
+            <span className="loan-menu-icon-label">
+              <MenuCadastroIcon />
+              <span>Cadastro</span>
+            </span>
+          </button>
+        ) : null}
+        {resolvedSectionVisibility.funil ? (
+          <button
+            type="button"
+            className={loanSection === "funil" ? "active" : ""}
+            onClick={() => {
+              setLoanSection("funil");
+              setIsImportMenuOpen(false);
+            }}
+          >
+            <span className="loan-menu-icon-label">
+              <MenuFunilIcon />
+              <span>Funil de Vendas</span>
+            </span>
+          </button>
+        ) : null}
+        {resolvedSectionVisibility.agenda ? (
+          <button
+            type="button"
+            className={loanSection === "agenda" ? "active" : ""}
+            onClick={() => {
+              setLoanSection("agenda");
+              setIsImportMenuOpen(false);
+            }}
+          >
+            <span className="loan-menu-icon-label">
+              <MenuAgendaIcon />
+              <span>Agenda</span>
+            </span>
+          </button>
+        ) : null}
+        {resolvedSectionVisibility.importacoes ? (
+          <button
+            type="button"
+            className={loanSection === "importacoes" ? "active" : ""}
+            onClick={() => setLoanSection("importacoes")}
+          >
+            <span className="loan-menu-icon-label">
+              <MenuImportIcon />
+              <span>Importações</span>
+            </span>
+          </button>
+        ) : null}
+        {resolvedSectionVisibility.comissao ? (
+          <button
+            type="button"
+            className={loanSection === "comissao" ? "active" : ""}
+            onClick={() => setLoanSection("comissao")}
+          >
+            <span className="loan-menu-icon-label">
+              <MenuComissaoIcon />
+              <span>Comissões</span>
+            </span>
+          </button>
+        ) : null}
+        {resolvedSectionVisibility.relatorios ? (
+          <button
+            type="button"
+            className={loanSection === "relatorios" ? "active" : ""}
+            onClick={() => setLoanSection("relatorios")}
+          >
+            <span className="loan-menu-icon-label">
+              <MenuRelatoriosIcon />
+              <span>Relatórios</span>
+            </span>
+          </button>
+        ) : null}
       </section>
+
+      {availableSections.length === 0 ? (
+        <section className="card">
+          <p className="muted-text">Seu usuário não possui submenus liberados no Negocial.</p>
+        </section>
+      ) : null}
 
       {loanSection === "funil" ? (
         <section className="card loan-dashboard">
@@ -2959,6 +3234,20 @@ export function EmprestimosPage() {
                 </option>
               ))}
             </select>
+            <select
+              value={cadastroFiltro.source}
+              onChange={(event) => {
+                setCadastroFiltro((prev) => ({ ...prev, source: event.target.value }));
+                setCadastroPaginacao((prev) => ({ ...prev, page: 1 }));
+              }}
+            >
+              <option value="">Todas as origens</option>
+              {sourceOptions.map((source) => (
+                <option key={`cadastro-source-${source}`} value={source}>
+                  {source}
+                </option>
+              ))}
+            </select>
           </div>
           <table>
             <thead>
@@ -3112,6 +3401,7 @@ export function EmprestimosPage() {
       <section className="card loan-funil-card">
         <div className="loan-client-filter-row">
           <input
+            className="loan-funil-search-input"
             placeholder="Buscar cliente"
             value={clientesFiltro.busca}
             onChange={(event) => {
@@ -3148,6 +3438,21 @@ export function EmprestimosPage() {
             ))}
           </select>
           <select
+            value={clientesFiltro.source}
+            onChange={(event) => {
+              setClientesFiltro((prev) => ({ ...prev, source: event.target.value }));
+              setClientesPaginacao((prev) => ({ ...prev, page: 1 }));
+            }}
+          >
+            <option value="">Todas as origens</option>
+            {sourceOptions.map((source) => (
+              <option key={`funil-source-${source}`} value={source}>
+                {source}
+              </option>
+            ))}
+          </select>
+          <select
+            className="loan-funil-month-select"
             value={clientesFiltro.monthRef}
             onChange={(event) => {
               setClientesFiltro((prev) => ({ ...prev, monthRef: event.target.value }));
@@ -3161,10 +3466,10 @@ export function EmprestimosPage() {
             ))}
           </select>
           <button
-            className="loan-filter-clear-button"
+            className="loan-filter-clear-button loan-funil-clear-button"
             type="button"
             onClick={() => {
-              setClientesFiltro({ busca: "", status: "", vendedorId: "", monthRef: "" });
+              setClientesFiltro({ busca: "", status: "", source: "", vendedorId: "", monthRef: "" });
               setClientesPaginacao((prev) => ({ ...prev, page: 1 }));
             }}
           >
@@ -3767,7 +4072,13 @@ export function EmprestimosPage() {
           <section className="card modal-card modal-card-loan-template" onClick={(event) => event.stopPropagation()}>
             <div className="section-header-row">
               <h3>Motivo da perda</h3>
-              <button type="button" onClick={() => setIsLostReasonModalOpen(false)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsLostReasonModalOpen(false);
+                  setLostHasMargin("");
+                }}
+              >
                 X
               </button>
             </div>
@@ -3778,6 +4089,20 @@ export function EmprestimosPage() {
                 void onConfirmLostReason();
               }}
             >
+              <label>
+                Possui margem?
+                <select
+                  value={lostHasMargin}
+                  onChange={(event) => setLostHasMargin(event.target.value as "" | "sim" | "nao")}
+                  required
+                >
+                  <option value="" disabled>
+                    Selecione
+                  </option>
+                  <option value="sim">Sim</option>
+                  <option value="nao">Não</option>
+                </select>
+              </label>
               <label>
                 Informe o motivo
                 <textarea
@@ -5391,6 +5716,196 @@ export function EmprestimosPage() {
             </h3>
           </div>
           <p className="section-subtitle">Módulo reservado para implementação futura.</p>
+        </section>
+      ) : null}
+
+      {loanSection === "relatorios" ? (
+        <section className="card">
+          <div className="section-header-row">
+            <h3 className="loan-title-icon-label">
+              <MenuRelatoriosIcon />
+              <span>Relatórios do Funil</span>
+            </h3>
+            <div className="row">
+              <label>
+                Competência
+                <select
+                  value={relatoriosFiltro.monthRef}
+                  onChange={(event) =>
+                    setRelatoriosFiltro((prev) => ({ ...prev, monthRef: event.target.value }))
+                  }
+                >
+                  {monthFilterOptions.map((item) => (
+                    <option key={`relatorio-month-${item.value || "all"}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" onClick={() => void loadFunnelOutcomeReportData()} disabled={funnelOutcomeReportLoading}>
+                {funnelOutcomeReportLoading ? "Atualizando..." : "Atualizar"}
+              </button>
+              <button
+                type="button"
+                onClick={onExportFunnelOutcomeReport}
+                disabled={funnelOutcomeReportLoading || filteredFunnelOutcomeReportItems.length === 0}
+              >
+                Exportar Excel
+              </button>
+            </div>
+          </div>
+          <div className="loan-client-filter-row">
+            <input
+              placeholder="Buscar cliente (nome ou CPF)"
+              value={relatoriosFiltro.busca}
+              onChange={(event) =>
+                setRelatoriosFiltro((prev) => ({ ...prev, busca: event.target.value }))
+              }
+            />
+            <select
+              value={relatoriosFiltro.hasMargin}
+              onChange={(event) =>
+                setRelatoriosFiltro((prev) => ({
+                  ...prev,
+                  hasMargin: event.target.value as "" | "sim" | "nao",
+                }))
+              }
+            >
+              <option value="">Possui margem? (todos)</option>
+              <option value="sim">Sim</option>
+              <option value="nao">Não</option>
+            </select>
+            <select
+              value={relatoriosFiltro.status}
+              onChange={(event) =>
+                setRelatoriosFiltro((prev) => ({
+                  ...prev,
+                  status: event.target.value as "" | "ganho" | "perdido",
+                }))
+              }
+            >
+              <option value="">Status (todos)</option>
+              <option value="ganho">Ganho</option>
+              <option value="perdido">Perdido</option>
+            </select>
+            <select
+              value={relatoriosFiltro.vendedorId}
+              onChange={(event) =>
+                setRelatoriosFiltro((prev) => ({ ...prev, vendedorId: event.target.value }))
+              }
+            >
+              <option value="">Todos os vendedores</option>
+              {sellerOptions.map((seller) => (
+                <option key={`report-seller-${seller.id}`} value={String(seller.id)}>
+                  {seller.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={relatoriosFiltro.convenio}
+              onChange={(event) =>
+                setRelatoriosFiltro((prev) => ({ ...prev, convenio: event.target.value }))
+              }
+            >
+              <option value="">Todos os convênios</option>
+              {convenioOptions.map((convenio) => (
+                <option key={`report-convenio-${convenio}`} value={convenio}>
+                  {convenio}
+                </option>
+              ))}
+            </select>
+            <select
+              value={relatoriosFiltro.source}
+              onChange={(event) =>
+                setRelatoriosFiltro((prev) => ({ ...prev, source: event.target.value }))
+              }
+            >
+              <option value="">Todas as origens</option>
+              {sourceOptions.map((source) => (
+                <option key={`report-source-${source}`} value={source}>
+                  {source}
+                </option>
+              ))}
+            </select>
+            <button
+              className="loan-filter-clear-button"
+              type="button"
+              onClick={() =>
+                setRelatoriosFiltro({
+                  monthRef: relatoriosFiltro.monthRef,
+                  busca: "",
+                  hasMargin: "",
+                  status: "",
+                  vendedorId: "",
+                  convenio: "",
+                  source: "",
+                })
+              }
+            >
+              Limpar filtros
+            </button>
+          </div>
+          <div className="loan-metrics">
+            <article>
+              <strong>{filteredFunnelOutcomeTotals.total}</strong>
+              <span>Total no relatório</span>
+            </article>
+            <article>
+              <strong>{filteredFunnelOutcomeTotals.ganho}</strong>
+              <span>Ganhos</span>
+            </article>
+            <article>
+              <strong>{filteredFunnelOutcomeTotals.perdido}</strong>
+              <span>Perdas</span>
+            </article>
+          </div>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Status</th>
+                  <th>Nome</th>
+                  <th>CPF</th>
+                  <th>Telefones</th>
+                  <th>Cidade</th>
+                  <th>Profissão</th>
+                  <th>Convênio</th>
+                  <th>Renda</th>
+                  <th>Origem</th>
+                  <th>Vendedor</th>
+                  <th>Atualizado em</th>
+                  <th>Possui margem?</th>
+                  <th>Motivo da perda</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredFunnelOutcomeReportItems.map((item) => (
+                  <tr key={`funnel-report-${item.id}`}>
+                    <td>{item.status === "ganho" ? "Ganho" : "Perdido"}</td>
+                    <td>{item.name}</td>
+                    <td>{item.cpf}</td>
+                    <td>{item.phones.length > 0 ? item.phones.join(", ") : "-"}</td>
+                    <td>{item.city || "-"}</td>
+                    <td>{item.profession || "-"}</td>
+                    <td>{item.convenio || "-"}</td>
+                    <td>{formatCurrency(Number(item.income || 0))}</td>
+                    <td>{item.source || "-"}</td>
+                    <td>{item.assignedUserName || "-"}</td>
+                    <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString("pt-BR") : "-"}</td>
+                    <td>
+                      {item.lostHasMargin === null ? "-" : item.lostHasMargin ? "Sim" : "Não"}
+                    </td>
+                    <td>{item.lostReason || "-"}</td>
+                  </tr>
+                ))}
+                {filteredFunnelOutcomeReportItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={13}>Nenhum resultado encontrado para o filtro selecionado.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </section>
       ) : null}
 

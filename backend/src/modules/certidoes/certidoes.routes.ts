@@ -22,7 +22,7 @@ import {
 } from "./certidoes.service";
 
 const certidoesRouter = Router();
-const certTypeSchema = z.enum(["CNDT", "CNF", "CRF"]);
+const certTypeSchema = z.enum(["CNDT", "CNF", "CRF", "CNDM", "CNDE", "CNDJ"]);
 const monthlyObligationTypeSchema = z.enum(["SIMPLES", "FGTS"]);
 const monthlyUploadModeSchema = z.enum(["single", "separate"]);
 const nfseTemplateKeySchema = z.enum(["DIA_5_RETIDO", "DIA_20_SEM_RETENCAO"]);

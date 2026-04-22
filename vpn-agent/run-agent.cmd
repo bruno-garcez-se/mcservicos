@@ -10,6 +10,11 @@ if not exist "%APP_DIR%.env" (
   )
 )
 
-node "%APP_DIR%dist\server.js" >> "%APP_DIR%agent.log" 2>&1
+set "NODE_BIN=%APP_DIR%runtime\node\node.exe"
+if not exist "%NODE_BIN%" (
+  set "NODE_BIN=node"
+)
+
+"%NODE_BIN%" "%APP_DIR%dist\server.js" >> "%APP_DIR%agent.log" 2>&1
 
 endlocal

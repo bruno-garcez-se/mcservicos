@@ -4,11 +4,13 @@ CREATE TABLE IF NOT EXISTS users (
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin', 'employee')),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'employee', 'observer')),
   active BOOLEAN NOT NULL DEFAULT TRUE,
   can_view_senhas BOOLEAN NOT NULL DEFAULT TRUE,
   can_view_transacional BOOLEAN NOT NULL DEFAULT TRUE,
   can_view_negocial BOOLEAN NOT NULL DEFAULT TRUE,
+  can_view_contatos BOOLEAN NOT NULL DEFAULT TRUE,
+  can_view_negocial_sections JSONB NOT NULL DEFAULT '{"cadastro":true,"funil":true,"agenda":true,"importacoes":true,"comissao":true,"relatorios":true}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -20,6 +22,27 @@ ADD COLUMN IF NOT EXISTS can_view_transacional BOOLEAN NOT NULL DEFAULT TRUE;
 
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS can_view_negocial BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS can_view_contatos BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS can_view_negocial_sections JSONB NOT NULL DEFAULT '{"cadastro":true,"funil":true,"agenda":true,"importacoes":true,"comissao":true,"relatorios":true}'::jsonb;
+
+ALTER TABLE users
+ALTER COLUMN can_view_negocial_sections
+SET DEFAULT '{"cadastro":true,"funil":true,"agenda":true,"importacoes":true,"comissao":true,"relatorios":true}'::jsonb;
+
+UPDATE users
+SET can_view_negocial_sections = COALESCE(can_view_negocial_sections, '{}'::jsonb) || '{"relatorios":true}'::jsonb
+WHERE can_view_negocial_sections IS NULL
+  OR NOT (can_view_negocial_sections ? 'relatorios');
+
+ALTER TABLE users
+DROP CONSTRAINT IF EXISTS users_role_check;
+
+ALTER TABLE users
+ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'employee', 'observer'));
 
 CREATE TABLE IF NOT EXISTS groups (
   id SERIAL PRIMARY KEY,

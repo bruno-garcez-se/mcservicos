@@ -439,8 +439,16 @@ export function FinanceiroPage() {
         })),
       });
       setSelectedEntryIds([]);
-    } catch {
-      setMessage("Falha ao carregar financeiro.");
+    } catch (error: unknown) {
+      const apiMessage =
+        typeof error === "object" &&
+        error &&
+        "response" in error &&
+        typeof (error as { response?: unknown }).response === "object" &&
+        (error as { response?: { data?: { message?: string } } }).response?.data?.message
+          ? (error as { response?: { data?: { message?: string } } }).response?.data?.message
+          : null;
+      setMessage(apiMessage ?? "Falha ao carregar financeiro.");
     } finally {
       setLoading(false);
     }

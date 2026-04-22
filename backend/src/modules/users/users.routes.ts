@@ -4,7 +4,11 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../../middlewares/auth";
 import { pool } from "../../db/pool";
 import { createAuditLog } from "../audit/audit.service";
-import { ensureUserMenuVisibilityColumns } from "./userMenuVisibility";
+import {
+  DEFAULT_NEGOCIAL_SECTIONS_VISIBILITY,
+  ensureUserMenuVisibilityColumns,
+  normalizeMenuVisibility,
+} from "./userMenuVisibility";
 
 const usersRouter = Router();
 const menuVisibilitySchema = z
@@ -12,18 +16,31 @@ const menuVisibilitySchema = z
     senhas: z.boolean(),
     transacional: z.boolean(),
     negocial: z.boolean(),
+    contatos: z.boolean(),
+    negocialSections: z
+      .object({
+        cadastro: z.boolean(),
+        funil: z.boolean(),
+        agenda: z.boolean(),
+        importacoes: z.boolean(),
+        comissao: z.boolean(),
+        relatorios: z.boolean(),
+      })
+      .default(DEFAULT_NEGOCIAL_SECTIONS_VISIBILITY),
   })
   .default({
     senhas: true,
     transacional: true,
     negocial: true,
+    contatos: true,
+    negocialSections: DEFAULT_NEGOCIAL_SECTIONS_VISIBILITY,
   });
 
 const createUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(6),
-  role: z.enum(["admin", "employee"]).default("employee"),
+  role: z.enum(["admin", "employee", "observer"]).default("employee"),
   active: z.boolean().default(true),
   groupIds: z.array(z.number().int().positive()).default([]),
   menuVisibility: menuVisibilitySchema,
@@ -32,7 +49,7 @@ const createUserSchema = z.object({
 const updateUserSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
-  role: z.enum(["admin", "employee"]),
+  role: z.enum(["admin", "employee", "observer"]),
   active: z.boolean(),
   groupIds: z.array(z.number().int().positive()).default([]),
   password: z.string().min(6).optional(),
@@ -47,6 +64,11 @@ usersRouter.use(requireAuth, requireRole("admin"));
 usersRouter.use(async (_req, _res, next) => {
   try {
     await ensureUserMenuVisibilityColumns();
+    await pool.query(`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`);
+    await pool.query(
+      `ALTER TABLE users
+       ADD CONSTRAINT users_role_check CHECK (role IN ('admin', 'employee', 'observer'))`,
+    );
     next();
   } catch (error) {
     next(error);
@@ -55,7 +77,7 @@ usersRouter.use(async (_req, _res, next) => {
 
 usersRouter.get("/", async (_req, res) => {
   const usersResult = await pool.query(
-    `SELECT id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, created_at
+    `SELECT id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, can_view_contatos, can_view_negocial_sections, created_at
      FROM users
      ORDER BY name ASC`,
   );
@@ -75,13 +97,15 @@ usersRouter.get("/", async (_req, res) => {
       id: Number(row.id),
       name: String(row.name),
       email: String(row.email),
-      role: row.role as "admin" | "employee",
+      role: row.role as "admin" | "employee" | "observer",
       active: Boolean(row.active),
-      menuVisibility: {
-        senhas: Boolean(row.can_view_senhas),
-        transacional: Boolean(row.can_view_transacional),
-        negocial: Boolean(row.can_view_negocial),
-      },
+      menuVisibility: normalizeMenuVisibility({
+        senhas: row.can_view_senhas,
+        transacional: row.can_view_transacional,
+        negocial: row.can_view_negocial,
+        contatos: row.can_view_contatos,
+        negocialSections: row.can_view_negocial_sections,
+      }),
       createdAt: String(row.created_at),
       groups: groups.rows.map((group) => ({
         id: Number(group.id),
@@ -108,10 +132,12 @@ usersRouter.post("/", async (req, res) => {
       active,
       can_view_senhas,
       can_view_transacional,
-      can_view_negocial
+      can_view_negocial,
+      can_view_contatos,
+      can_view_negocial_sections
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, created_at`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
+     RETURNING id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, can_view_contatos, can_view_negocial_sections, created_at`,
     [
       payload.name,
       payload.email.toLowerCase(),
@@ -121,6 +147,8 @@ usersRouter.post("/", async (req, res) => {
       payload.menuVisibility.senhas,
       payload.menuVisibility.transacional,
       payload.menuVisibility.negocial,
+      payload.menuVisibility.contatos,
+      JSON.stringify(payload.menuVisibility.negocialSections),
     ],
   );
 
@@ -128,11 +156,13 @@ usersRouter.post("/", async (req, res) => {
     id: number;
     name: string;
     email: string;
-    role: "admin" | "employee";
+    role: "admin" | "employee" | "observer";
     active: boolean;
     can_view_senhas: boolean;
     can_view_transacional: boolean;
     can_view_negocial: boolean;
+    can_view_contatos: boolean;
+    can_view_negocial_sections: unknown;
     created_at: string;
   };
 
@@ -162,11 +192,13 @@ usersRouter.post("/", async (req, res) => {
     email: created.email,
     role: created.role,
     active: created.active,
-    menuVisibility: {
+    menuVisibility: normalizeMenuVisibility({
       senhas: created.can_view_senhas,
       transacional: created.can_view_transacional,
       negocial: created.can_view_negocial,
-    },
+      contatos: created.can_view_contatos,
+      negocialSections: created.can_view_negocial_sections,
+    }),
     createdAt: created.created_at,
     groupIds: payload.groupIds,
   });
@@ -185,6 +217,8 @@ usersRouter.put("/:id", async (req, res) => {
     "can_view_senhas = $5",
     "can_view_transacional = $6",
     "can_view_negocial = $7",
+    "can_view_contatos = $8",
+    "can_view_negocial_sections = $9::jsonb",
   ];
   const values: unknown[] = [
     payload.name,
@@ -194,6 +228,8 @@ usersRouter.put("/:id", async (req, res) => {
     payload.menuVisibility.senhas,
     payload.menuVisibility.transacional,
     payload.menuVisibility.negocial,
+    payload.menuVisibility.contatos,
+    JSON.stringify(payload.menuVisibility.negocialSections),
   ];
 
   if (payload.password) {
@@ -209,7 +245,7 @@ usersRouter.put("/:id", async (req, res) => {
     `UPDATE users
      SET ${fields.join(", ")}
      WHERE id = $${whereIndex}
-     RETURNING id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, created_at`,
+     RETURNING id, name, email, role, active, can_view_senhas, can_view_transacional, can_view_negocial, can_view_contatos, can_view_negocial_sections, created_at`,
     values,
   );
 
@@ -245,11 +281,13 @@ usersRouter.put("/:id", async (req, res) => {
     id: number;
     name: string;
     email: string;
-    role: "admin" | "employee";
+    role: "admin" | "employee" | "observer";
     active: boolean;
     can_view_senhas: boolean;
     can_view_transacional: boolean;
     can_view_negocial: boolean;
+    can_view_contatos: boolean;
+    can_view_negocial_sections: unknown;
     created_at: string;
   };
 
@@ -259,11 +297,13 @@ usersRouter.put("/:id", async (req, res) => {
     email: updated.email,
     role: updated.role,
     active: updated.active,
-    menuVisibility: {
+    menuVisibility: normalizeMenuVisibility({
       senhas: updated.can_view_senhas,
       transacional: updated.can_view_transacional,
       negocial: updated.can_view_negocial,
-    },
+      contatos: updated.can_view_contatos,
+      negocialSections: updated.can_view_negocial_sections,
+    }),
     createdAt: updated.created_at,
     groupIds: payload.groupIds,
   });
@@ -301,7 +341,7 @@ usersRouter.delete("/:id", async (req, res) => {
   const deleted = deletedResult.rows[0] as {
     id: number;
     email: string;
-    role: "admin" | "employee";
+    role: "admin" | "employee" | "observer";
   };
 
   await createAuditLog({

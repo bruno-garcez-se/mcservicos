@@ -1,4 +1,4 @@
-export type CertidaoTipo = "CNDT" | "CNF" | "CRF";
+export type CertidaoTipo = "CNDT" | "CNF" | "CRF" | "CNDM" | "CNDE" | "CNDJ";
 
 export type CertidaoStatus = "valida" | "vencendo" | "vencida" | "pendente" | "falha";
 export type MonthlyObligationType = "SIMPLES" | "FGTS";

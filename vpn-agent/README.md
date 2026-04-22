@@ -5,7 +5,6 @@ Agente local para permitir que o portal online ligue/desligue a VPN no computado
 ## Requisitos
 
 - Windows
-- Node.js 18+
 - Uma conexão VPN já configurada no Windows
 
 ## Configuração
@@ -54,8 +53,14 @@ O instalador será gerado em:
 
 - Faz build do agente (`dist`)
 - Prepara `installer/payload` com arquivos necessários
+- Inclui runtime local do Node.js no instalador
 - Instala dependências de produção no payload
 - Compila o instalador Inno Setup
+
+## Observações do instalador
+
+- O instalador gerado executa o agente mesmo em PCs sem Node.js instalado.
+- Durante a geração do instalador, a máquina de build precisa ter Node.js disponível no PATH.
 
 ## Distribuição no portal
 

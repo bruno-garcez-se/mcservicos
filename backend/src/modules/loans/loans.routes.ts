@@ -104,6 +104,26 @@ function formatPhone(value: string): string {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
 
+function parseLossNote(rawNotes: string | null): { reason: string | null; hasMargin: boolean | null } {
+  if (!rawNotes) return { reason: null, hasMargin: null };
+  const normalized = rawNotes.trim();
+  const prefix = "Motivo da perda:";
+  const withoutPrefix = normalized.toLowerCase().startsWith(prefix.toLowerCase())
+    ? normalized.slice(prefix.length).trim()
+    : normalized;
+  const marginMatch = withoutPrefix.match(/\|\s*Possui margem:\s*(sim|não|nao)\s*$/i);
+  const hasMargin =
+    marginMatch?.[1]?.toLowerCase() === "sim"
+      ? true
+      : marginMatch?.[1]
+        ? false
+        : null;
+  const reason = marginMatch
+    ? withoutPrefix.slice(0, marginMatch.index).trim() || null
+    : withoutPrefix || null;
+  return { reason, hasMargin };
+}
+
 function pmt(principal: number, monthlyRatePercent: number, installments: number): number {
   const rate = monthlyRatePercent / 100;
   const numerator = principal * rate;
@@ -250,6 +270,107 @@ loansRouter.get("/dashboard", requireAuth, async (req, res) => {
   });
 });
 
+loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
+  await ensureLoanClientStructures();
+  const query = z
+    .object({
+      monthRef: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    })
+    .parse(req.query);
+  const params: Array<string> = [];
+  let scope = "c.deleted_at IS NULL AND c.status IN ('ganho', 'perdido')";
+  if (query.monthRef) {
+    params.push(`${query.monthRef}-01`);
+    scope += ` AND DATE_TRUNC('month', c.updated_at) = DATE_TRUNC('month', $${params.length}::date)`;
+  }
+
+  const result = await pool.query<{
+    id: number;
+    name: string;
+    cpf: string;
+    city: string;
+    profession: string;
+    convenio: string;
+    income: string;
+    source: string;
+    status: "ganho" | "perdido";
+    assignedUserName: string | null;
+    updatedAt: string;
+    lastLossInteractionAt: string | null;
+    lastLossNotes: string | null;
+    phones: string[];
+  }>(
+    `SELECT
+      c.id,
+      c.name,
+      c.cpf,
+      c.city,
+      c.profession,
+      c.convenio,
+      c.income::text AS income,
+      c.source,
+      c.status,
+      u.name AS "assignedUserName",
+      c.updated_at AS "updatedAt",
+      loss.created_at AS "lastLossInteractionAt",
+      loss.notes AS "lastLossNotes",
+      COALESCE(phones.phones, ARRAY[]::text[]) AS phones
+    FROM loan_clients c
+    LEFT JOIN users u ON u.id = c.assigned_user_id
+    LEFT JOIN LATERAL (
+      SELECT ARRAY_AGG(p.phone ORDER BY p.id) AS phones
+      FROM loan_client_phones p
+      WHERE p.client_id = c.id
+    ) phones ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT i.notes, i.created_at
+      FROM loan_interactions i
+      WHERE i.client_id = c.id
+        AND i.notes ILIKE 'Motivo da perda:%'
+      ORDER BY i.created_at DESC
+      LIMIT 1
+    ) loss ON TRUE
+    WHERE ${scope}
+    ORDER BY c.updated_at DESC, c.id DESC`,
+    params,
+  );
+
+  const items = result.rows.map((row) => {
+    const parsedLoss = parseLossNote(row.lastLossNotes);
+    return {
+      id: row.id,
+      name: row.name,
+      cpf: formatCpf(String(row.cpf ?? "")),
+      phones: Array.isArray(row.phones) ? row.phones.map((phone) => formatPhone(String(phone ?? ""))) : [],
+      city: row.city ?? "",
+      profession: row.profession ?? "",
+      convenio: row.convenio ?? "",
+      income: Number(row.income ?? 0),
+      source: row.source ?? "",
+      status: row.status,
+      assignedUserName: row.assignedUserName ?? null,
+      updatedAt: row.updatedAt,
+      lastLossInteractionAt: row.lastLossInteractionAt,
+      lostReason: row.status === "perdido" ? parsedLoss.reason : null,
+      lostHasMargin: row.status === "perdido" ? parsedLoss.hasMargin : null,
+    };
+  });
+
+  const ganho = items.filter((item) => item.status === "ganho").length;
+  const perdido = items.filter((item) => item.status === "perdido").length;
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    monthRef: query.monthRef ?? null,
+    totals: {
+      ganho,
+      perdido,
+      total: items.length,
+    },
+    items,
+  });
+});
+
 loansRouter.get("/sellers", requireAuth, async (_req, res) => {
   const result = await pool.query(
     `SELECT id, name, email
@@ -377,6 +498,7 @@ loansRouter.get("/clients", requireAuth, async (req, res) => {
       search: z.string().trim().optional(),
       monthRef: z.string().regex(/^\d{4}-\d{2}$/).optional(),
       status: z.enum(clientStatusValues).optional(),
+      source: z.string().trim().optional(),
       assignedUserId: z.coerce.number().int().positive().optional(),
       sortBy: z
         .enum(["name", "cpf", "city", "profession", "convenio", "assignedUserName", "status", "updatedAt"])
@@ -403,6 +525,10 @@ loansRouter.get("/clients", requireAuth, async (req, res) => {
   if (query.status) {
     params.push(query.status);
     scope += ` AND c.status = $${params.length}`;
+  }
+  if (query.source) {
+    params.push(query.source);
+    scope += ` AND c.source = $${params.length}`;
   }
   if (query.assignedUserId) {
     params.push(query.assignedUserId);

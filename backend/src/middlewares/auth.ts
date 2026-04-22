@@ -29,6 +29,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
       groupIds: payload.groupIds,
       menuVisibility: payload.menuVisibility,
     };
+    const isReadMethod = req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS";
+    const allowObserverWrite = req.baseUrl === "/auth" && req.path === "/change-password";
+    if (payload.role === "observer" && !isReadMethod && !allowObserverWrite) {
+      res.status(403).json({ message: "Perfil observador possui acesso somente leitura." });
+      return;
+    }
     next();
   } catch {
     res.status(401).json({ message: "Token invalido ou expirado." });

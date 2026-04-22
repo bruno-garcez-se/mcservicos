@@ -8,13 +8,22 @@ type UserForm = {
   name: string;
   email: string;
   password: string;
-  role: "admin" | "employee";
+  role: "admin" | "employee" | "observer";
   active: boolean;
   groupIds: number[];
   menuVisibility: {
     senhas: boolean;
     transacional: boolean;
     negocial: boolean;
+    contatos: boolean;
+    negocialSections: {
+      cadastro: boolean;
+      funil: boolean;
+      agenda: boolean;
+      importacoes: boolean;
+      comissao: boolean;
+      relatorios: boolean;
+    };
   };
 };
 
@@ -29,6 +38,15 @@ const emptyForm: UserForm = {
     senhas: true,
     transacional: true,
     negocial: true,
+    contatos: true,
+    negocialSections: {
+      cadastro: true,
+      funil: true,
+      agenda: true,
+      importacoes: true,
+      comissao: true,
+      relatorios: true,
+    },
   },
 };
 
@@ -70,8 +88,11 @@ export function UsersPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const groupNameById = new Map(groups.map((group) => [group.id, group.name]));
-  const roleLabel = (role: "admin" | "employee") =>
-    role === "admin" ? "Administrador" : "Usuário";
+  const roleLabel = (role: "admin" | "employee" | "observer") => {
+    if (role === "admin") return "Administrador";
+    if (role === "observer") return "Observador";
+    return "Usuário";
+  };
   const selectedUser = form.id ? users.find((user) => user.id === form.id) : undefined;
   const feedbackLabel = (text: string): string => {
     const normalized = text.toLowerCase();
@@ -131,8 +152,16 @@ export function UsersPage() {
       setForm(emptyForm);
       setIsFormOpen(false);
       await loadData();
-    } catch {
-      setMessage("Não foi possível salvar o usuário.");
+    } catch (error: unknown) {
+      const apiMessage =
+        typeof error === "object" &&
+        error &&
+        "response" in error &&
+        typeof (error as { response?: unknown }).response === "object" &&
+        (error as { response?: { data?: { message?: string } } }).response?.data?.message
+          ? (error as { response?: { data?: { message?: string } } }).response?.data?.message
+          : null;
+      setMessage(apiMessage ?? "Não foi possível salvar o usuário.");
     }
   };
 
@@ -150,6 +179,15 @@ export function UsersPage() {
         senhas: true,
         transacional: true,
         negocial: true,
+        contatos: true,
+        negocialSections: {
+          cadastro: true,
+          funil: true,
+          agenda: true,
+          importacoes: true,
+          comissao: true,
+          relatorios: true,
+        },
       },
     });
     setIsFormOpen(true);
@@ -302,12 +340,13 @@ export function UsersPage() {
                   onChange={(e) =>
                     setForm((prev) => ({
                       ...prev,
-                      role: e.target.value as "admin" | "employee",
+                      role: e.target.value as "admin" | "employee" | "observer",
                     }))
                   }
                 >
                   <option value="employee">Usuário</option>
                   <option value="admin">Administrador</option>
+                  <option value="observer">Observador</option>
                 </select>
               </label>
               <label className="checkbox">
@@ -380,6 +419,121 @@ export function UsersPage() {
                   />
                   Negocial
                 </label>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={form.menuVisibility.contatos}
+                    onChange={(e) =>
+                      setForm((prev) => ({
+                        ...prev,
+                        menuVisibility: { ...prev.menuVisibility, contatos: e.target.checked },
+                      }))
+                    }
+                  />
+                  Contatos
+                </label>
+                <fieldset>
+                  <legend>Submenus do Negocial</legend>
+                  <small className="muted-text">
+                    Esses controles valem quando o menu Negocial estiver visível.
+                  </small>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.menuVisibility.negocialSections.cadastro}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          menuVisibility: {
+                            ...prev.menuVisibility,
+                            negocialSections: { ...prev.menuVisibility.negocialSections, cadastro: e.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Cadastro
+                  </label>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.menuVisibility.negocialSections.funil}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          menuVisibility: {
+                            ...prev.menuVisibility,
+                            negocialSections: { ...prev.menuVisibility.negocialSections, funil: e.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Funil de Vendas
+                  </label>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.menuVisibility.negocialSections.agenda}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          menuVisibility: {
+                            ...prev.menuVisibility,
+                            negocialSections: { ...prev.menuVisibility.negocialSections, agenda: e.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Agenda
+                  </label>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.menuVisibility.negocialSections.importacoes}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          menuVisibility: {
+                            ...prev.menuVisibility,
+                            negocialSections: { ...prev.menuVisibility.negocialSections, importacoes: e.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Importações
+                  </label>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.menuVisibility.negocialSections.comissao}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          menuVisibility: {
+                            ...prev.menuVisibility,
+                            negocialSections: { ...prev.menuVisibility.negocialSections, comissao: e.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Comissões
+                  </label>
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={form.menuVisibility.negocialSections.relatorios}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          menuVisibility: {
+                            ...prev.menuVisibility,
+                            negocialSections: { ...prev.menuVisibility.negocialSections, relatorios: e.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Relatórios
+                  </label>
+                </fieldset>
               </fieldset>
 
               <div className="row">

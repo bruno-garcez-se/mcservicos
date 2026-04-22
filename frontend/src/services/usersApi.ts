@@ -10,13 +10,22 @@ export async function createUser(payload: {
   name: string;
   email: string;
   password: string;
-  role: "admin" | "employee";
+  role: "admin" | "employee" | "observer";
   active: boolean;
   groupIds: number[];
   menuVisibility: {
     senhas: boolean;
     transacional: boolean;
     negocial: boolean;
+    contatos: boolean;
+    negocialSections: {
+      cadastro: boolean;
+      funil: boolean;
+      agenda: boolean;
+      importacoes: boolean;
+      comissao: boolean;
+      relatorios: boolean;
+    };
   };
 }): Promise<ManagedUser> {
   const { data } = await http.post<ManagedUser>("/users", payload);
@@ -29,13 +38,22 @@ export async function updateUser(
     name: string;
     email: string;
     password?: string;
-    role: "admin" | "employee";
+    role: "admin" | "employee" | "observer";
     active: boolean;
     groupIds: number[];
     menuVisibility: {
       senhas: boolean;
       transacional: boolean;
       negocial: boolean;
+      contatos: boolean;
+      negocialSections: {
+        cadastro: boolean;
+        funil: boolean;
+        agenda: boolean;
+        importacoes: boolean;
+        comissao: boolean;
+        relatorios: boolean;
+      };
     };
   },
 ): Promise<ManagedUser> {

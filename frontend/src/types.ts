@@ -1,4 +1,4 @@
-export type Role = "admin" | "employee";
+export type Role = "admin" | "employee" | "observer";
 
 export type User = {
   id: number;
@@ -10,6 +10,15 @@ export type User = {
     senhas: boolean;
     transacional: boolean;
     negocial: boolean;
+    contatos: boolean;
+    negocialSections: {
+      cadastro: boolean;
+      funil: boolean;
+      agenda: boolean;
+      importacoes: boolean;
+      comissao: boolean;
+      relatorios: boolean;
+    };
   };
 };
 
@@ -25,6 +34,15 @@ export type ManagedUser = {
     senhas: boolean;
     transacional: boolean;
     negocial: boolean;
+    contatos: boolean;
+    negocialSections: {
+      cadastro: boolean;
+      funil: boolean;
+      agenda: boolean;
+      importacoes: boolean;
+      comissao: boolean;
+      relatorios: boolean;
+    };
   };
 };
 
@@ -145,6 +163,37 @@ export type LoanDashboard = {
   statusBreakdown: Array<{ status: LoanClientStatus; total: number }>;
   interactionsByDay: Array<{ day: string; total: number }>;
   productsMostSold: Array<{ product_type: LoanProductType; total: number }>;
+};
+
+export type LoanFunnelOutcomeStatus = "ganho" | "perdido";
+
+export type LoanFunnelOutcomeReportItem = {
+  id: number;
+  name: string;
+  cpf: string;
+  phones: string[];
+  city: string;
+  profession: string;
+  convenio: string;
+  income: number;
+  source: string;
+  status: LoanFunnelOutcomeStatus;
+  assignedUserName: string | null;
+  updatedAt: string;
+  lastLossInteractionAt: string | null;
+  lostReason: string | null;
+  lostHasMargin: boolean | null;
+};
+
+export type LoanFunnelOutcomeReport = {
+  generatedAt: string;
+  monthRef: string | null;
+  totals: {
+    ganho: number;
+    perdido: number;
+    total: number;
+  };
+  items: LoanFunnelOutcomeReportItem[];
 };
 
 export type ImportedServant = {
@@ -294,7 +343,7 @@ export type FinanceExpenseTemplate = {
   updatedAt: string;
 };
 
-export type DocumentCertidaoTipo = "CNDT" | "CNF" | "CRF";
+export type DocumentCertidaoTipo = "CNDT" | "CNF" | "CRF" | "CNDM" | "CNDE" | "CNDJ";
 
 export type DocumentCertidaoStatus = "valida" | "vencendo" | "vencida" | "pendente" | "falha";
 

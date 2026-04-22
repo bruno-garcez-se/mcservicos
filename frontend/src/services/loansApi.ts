@@ -2,6 +2,7 @@ import {
   LoanClient,
   LoanClientStatus,
   LoanDashboard,
+  LoanFunnelOutcomeReport,
   LoanAgendaItem,
   ImportedServant,
   LoanInteraction,
@@ -15,6 +16,7 @@ export async function listLoanClients(query?: {
   search?: string;
   monthRef?: string;
   status?: LoanClientStatus;
+  source?: string;
   assignedUserId?: number;
   sortBy?: "name" | "cpf" | "city" | "profession" | "convenio" | "assignedUserName" | "status" | "updatedAt";
   sortDir?: "asc" | "desc";
@@ -207,6 +209,13 @@ export async function importLoanLeads(payload: {
 
 export async function getLoanDashboard(query?: { monthRef?: string }): Promise<LoanDashboard> {
   const { data } = await http.get<LoanDashboard>("/loans/dashboard", {
+    params: query,
+  });
+  return data;
+}
+
+export async function getLoanFunnelOutcomeReport(query?: { monthRef?: string }): Promise<LoanFunnelOutcomeReport> {
+  const { data } = await http.get<LoanFunnelOutcomeReport>("/loans/reports/funnel-outcomes", {
     params: query,
   });
   return data;
