@@ -791,22 +791,26 @@ export function EmprestimosPage() {
   const [kanbanCardsByStatus, setKanbanCardsByStatus] = useState<Record<LoanClientStatus, LoanClient[]>>(
     EMPTY_KANBAN_CARDS,
   );
+  const defaultSellerFilter = isAdmin ? "" : String(user?.id ?? "");
   const [clientesFiltro, setClientesFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(KANBAN_FILTERS_STORAGE_KEY);
-      if (!raw) return { busca: "", status: "", vendedorId: String(user?.id ?? ""), monthRef: "" };
+      if (!raw) return { busca: "", status: "", vendedorId: defaultSellerFilter, monthRef: "" };
       const parsed = JSON.parse(raw) as { busca?: string; status?: string; vendedorId?: string; monthRef?: string };
+      const vendedorId =
+        isAdmin
+          ? ""
+          : typeof parsed.vendedorId === "string"
+            ? parsed.vendedorId
+            : defaultSellerFilter;
       return {
         busca: typeof parsed.busca === "string" ? parsed.busca : "",
         status: typeof parsed.status === "string" ? parsed.status : "",
-        vendedorId:
-          typeof parsed.vendedorId === "string"
-            ? parsed.vendedorId
-            : String(user?.id ?? ""),
+        vendedorId,
         monthRef: typeof parsed.monthRef === "string" ? parsed.monthRef : "",
       };
     } catch {
-      return { busca: "", status: "", vendedorId: String(user?.id ?? ""), monthRef: "" };
+      return { busca: "", status: "", vendedorId: defaultSellerFilter, monthRef: "" };
     }
   });
   const [servidoresFiltro, setServidoresFiltro] = useState(() => {
