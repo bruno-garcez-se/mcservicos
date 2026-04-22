@@ -8,7 +8,7 @@ export function connectRealtime(token: string): Socket {
     socketRef = null;
   }
 
-  socketRef = io(import.meta.env.VITE_API_URL ?? "http://localhost:3333", {
+  socketRef = io(import.meta.env.VITE_API_URL ?? "/api", {
     auth: { token },
     transports: ["websocket"],
   });

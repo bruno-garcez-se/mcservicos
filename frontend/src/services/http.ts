@@ -9,7 +9,7 @@ const VPN_SKIP_PATH_PREFIXES = ["/auth/login", "/auth/refresh", "/auth/logout"];
 let ensureVpnOffPromise: Promise<void> | null = null;
 
 export const http = axios.create({
-  baseURL: import.meta.env.VITE_API_URL ?? "http://localhost:3333",
+  baseURL: import.meta.env.VITE_API_URL ?? "/api",
   withCredentials: true,
 });
 
