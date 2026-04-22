@@ -460,6 +460,10 @@ export default function App() {
     const shouldEnable = !currentStatus.connected;
 
     if (!canToggleNow) {
+      if (looksWithoutAgentNow) {
+        openInstallAgentFlow();
+        return;
+      }
       if (currentStatus.needsSelection) {
         setVpnFeedbackTone("info");
         setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
@@ -468,10 +472,6 @@ export default function App() {
         await loadVpnConnections();
         return;
       }
-      openInstallAgentFlow();
-      return;
-    }
-    if (looksWithoutAgentNow) {
       openInstallAgentFlow();
       return;
     }
@@ -536,6 +536,10 @@ export default function App() {
         !currentStatus.connected);
 
     if (!canToggleNow) {
+      if (looksWithoutAgentNow) {
+        openInstallAgentFlow();
+        return;
+      }
       if (currentStatus.needsSelection) {
         setVpnFeedbackTone("info");
         setVpnFeedbackMessage("Selecione uma conexão VPN para habilitar o controle pelo sistema.");
@@ -544,10 +548,6 @@ export default function App() {
         await loadVpnConnections();
         return;
       }
-      openInstallAgentFlow();
-      return;
-    }
-    if (looksWithoutAgentNow) {
       openInstallAgentFlow();
       return;
     }
@@ -922,14 +922,25 @@ export default function App() {
               </select>
             </label>
             {vpnConnections?.connections.length === 0 ? (
-              <p className="error-text">
-                Nenhuma conexão VPN foi encontrada no Windows. Crie a VPN primeiro nas configurações do sistema.
-              </p>
+              !vpnAgentReachable ? (
+                <p className="error-text">
+                  Agente VPN não detectado neste computador. Instale o agente para habilitar o controle no sistema.
+                </p>
+              ) : (
+                <p className="error-text">
+                  Nenhuma conexão VPN foi encontrada no Windows. Crie a VPN primeiro nas configurações do sistema.
+                </p>
+              )
             ) : null}
             <div className="modal-actions">
               <button type="button" onClick={() => setIsVpnConfigModalOpen(false)} disabled={vpnBusy}>
                 Cancelar
               </button>
+              {!vpnAgentReachable ? (
+                <button type="button" className="primary-button" onClick={onInstallVpnAgent}>
+                  Instalar agente
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="primary-button"
