@@ -895,7 +895,8 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const [kanbanCardsByStatus, setKanbanCardsByStatus] = useState<Record<string, LoanClient[]>>(
     EMPTY_KANBAN_CARDS,
   );
-  const defaultSellerFilter = isAdmin ? "" : String(user?.id ?? "");
+  const shouldLockSellerFilterToCurrentUser = user?.role === "employee";
+  const defaultSellerFilter = shouldLockSellerFilterToCurrentUser ? String(user?.id ?? "") : "";
   const [clientesFiltro, setClientesFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(KANBAN_FILTERS_STORAGE_KEY);
@@ -907,12 +908,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         vendedorId?: string;
         monthRef?: string;
       };
-      const vendedorId =
-        isAdmin
-          ? ""
-          : typeof parsed.vendedorId === "string"
-            ? parsed.vendedorId
-            : defaultSellerFilter;
+      const vendedorId = shouldLockSellerFilterToCurrentUser
+        ? typeof parsed.vendedorId === "string"
+          ? parsed.vendedorId
+          : defaultSellerFilter
+        : "";
       return {
         busca: typeof parsed.busca === "string" ? parsed.busca : "",
         status: typeof parsed.status === "string" ? parsed.status : "",
