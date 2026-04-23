@@ -6,8 +6,11 @@ import {
   LoanAgendaItem,
   ImportedServant,
   LoanInteraction,
+  LoanOpportunity,
+  LoanTimelineItem,
   LoanProduct,
   LoanProductType,
+  LoanPipelineStage,
   LoanSimulation,
 } from "../types";
 import { http } from "./http";
@@ -110,6 +113,16 @@ export async function listLoanInteractions(clientId: number): Promise<LoanIntera
   return data;
 }
 
+export async function listLoanOpportunities(clientId: number): Promise<LoanOpportunity[]> {
+  const { data } = await http.get<LoanOpportunity[]>(`/loans/clients/${clientId}/opportunities`);
+  return data;
+}
+
+export async function listLoanTimeline(clientId: number): Promise<LoanTimelineItem[]> {
+  const { data } = await http.get<LoanTimelineItem[]>(`/loans/clients/${clientId}/timeline`);
+  return data;
+}
+
 export async function createLoanInteraction(
   clientId: number,
   payload: { notes: string; channel: string; scheduledFor?: string | null },
@@ -168,6 +181,10 @@ export async function markLoanClientActivityTouch(
   await http.post(`/loans/clients/${clientId}/activity-touch`, { channel });
 }
 
+export async function updateLoanClientLossMargin(clientId: number, hasMargin: boolean): Promise<void> {
+  await http.patch(`/loans/clients/${clientId}/loss-margin`, { hasMargin });
+}
+
 export async function listLoanProducts(): Promise<LoanProduct[]> {
   const { data } = await http.get<LoanProduct[]>("/loans/products");
   return data;
@@ -219,6 +236,27 @@ export async function getLoanFunnelOutcomeReport(query?: { monthRef?: string }):
     params: query,
   });
   return data;
+}
+
+export async function listLoanPipelineStages(): Promise<LoanPipelineStage[]> {
+  const { data } = await http.get<LoanPipelineStage[]>("/loans/pipeline-stages");
+  return data;
+}
+
+export async function createLoanPipelineStage(label: string): Promise<{ key: string; label: string; active: boolean }> {
+  const { data } = await http.post<{ key: string; label: string; active: boolean }>("/loans/pipeline-stages", { label });
+  return data;
+}
+
+export async function updateLoanPipelineStages(
+  stages: Array<{ key: string; label: string; active: boolean }>,
+): Promise<LoanPipelineStage[]> {
+  const { data } = await http.put<LoanPipelineStage[]>("/loans/pipeline-stages", { stages });
+  return data;
+}
+
+export async function deleteLoanPipelineStage(key: string): Promise<void> {
+  await http.delete(`/loans/pipeline-stages/${encodeURIComponent(key)}`);
 }
 
 export async function importarServidoresPortal(payload: {

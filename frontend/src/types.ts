@@ -69,17 +69,14 @@ export type Credential = {
   extraFields: ExtraField[];
 };
 
-export type LoanClientStatus =
-  | "novo"
-  | "em_atendimento"
-  | "simulacao"
-  | "em_analise"
-  | "digitacao"
-  | "seguro_ap"
-  | "assinatura"
-  | "pagamento"
-  | "ganho"
-  | "perdido";
+export type LoanClientStatus = string;
+
+export type LoanPipelineStage = {
+  key: string;
+  label: string;
+  position: number;
+  active: boolean;
+};
 
 export type LoanProductType = "credito" | "seguros" | "capitalizacao" | "imobiliario";
 
@@ -111,6 +108,18 @@ export type LoanInteraction = {
   completedAt?: string | null;
   createdAt: string;
   userName?: string;
+};
+
+export type LoanTimelineItem = {
+  id: string;
+  kind: "interaction" | "event";
+  action?: string;
+  title: string;
+  description: string | null;
+  actorUserName: string | null;
+  createdAt: string;
+  scheduledFor: string | null;
+  completedAt: string | null;
 };
 
 export type LoanAgendaItem = {
@@ -152,6 +161,22 @@ export type LoanSimulation = {
   effectiveCost: number;
   isBest: boolean;
   createdAt: string;
+};
+
+export type LoanOpportunity = {
+  id: number;
+  cycleNumber: number;
+  status: LoanClientStatus;
+  source: string;
+  assignedUserId: number | null;
+  assignedUserName: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  outcome: "ganho" | "perdido" | null;
+  lossReason: string | null;
+  lossHasMargin: boolean | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type LoanDashboard = {

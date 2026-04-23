@@ -434,7 +434,7 @@ function extractPdfUrlCandidates(input: {
 }
 
 async function renderUrlToPdfBase64(url: string): Promise<string | null> {
-  let browser: { close: () => Promise<void> } | null = null;
+  let browser: import("playwright").Browser | null = null;
   try {
     const playwright = await import("playwright");
     browser = await playwright.chromium.launch({ headless: true });

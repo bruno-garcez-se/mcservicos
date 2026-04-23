@@ -182,7 +182,7 @@ CREATE TABLE IF NOT EXISTS loan_clients (
   convenio TEXT NOT NULL DEFAULT '',
   income NUMERIC(14,2) NOT NULL DEFAULT 0,
   heat_badge TEXT CHECK (heat_badge IN ('Quente', 'Morno', 'Frio')),
-  status TEXT NOT NULL DEFAULT 'novo' CHECK (status IN ('novo', 'em_atendimento', 'simulacao', 'em_analise', 'digitacao', 'seguro_ap', 'assinatura', 'pagamento', 'ganho', 'perdido')),
+  status TEXT NOT NULL DEFAULT 'novo',
   source TEXT NOT NULL,
   assigned_user_id INT REFERENCES users(id),
   created_by INT REFERENCES users(id),
@@ -205,6 +205,28 @@ CREATE TABLE IF NOT EXISTS loan_client_phones (
 CREATE INDEX IF NOT EXISTS idx_loan_client_phones_phone ON loan_client_phones(phone);
 CREATE INDEX IF NOT EXISTS idx_loan_clients_status ON loan_clients(status);
 CREATE INDEX IF NOT EXISTS idx_loan_clients_deleted_at ON loan_clients(deleted_at);
+
+CREATE TABLE IF NOT EXISTS loan_opportunities (
+  id SERIAL PRIMARY KEY,
+  client_id INT NOT NULL REFERENCES loan_clients(id) ON DELETE CASCADE,
+  cycle_number INT NOT NULL,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT '',
+  assigned_user_id INT REFERENCES users(id),
+  opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  closed_at TIMESTAMPTZ,
+  outcome TEXT CHECK (outcome IN ('ganho', 'perdido')),
+  loss_reason TEXT,
+  loss_has_margin BOOLEAN,
+  created_by INT REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (client_id, cycle_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_loan_opportunities_client ON loan_opportunities(client_id);
+CREATE INDEX IF NOT EXISTS idx_loan_opportunities_status ON loan_opportunities(status);
+CREATE INDEX IF NOT EXISTS idx_loan_opportunities_closed_at ON loan_opportunities(closed_at);
 
 CREATE TABLE IF NOT EXISTS transaction_terminals (
   id SERIAL PRIMARY KEY,
@@ -512,5 +534,9 @@ ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO loan_settings (key, value_text)
 VALUES ('consignado_rate', '1.8'), ('pessoal_rate', '3.5')
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO loan_settings (key, value_text)
+VALUES ('pipeline_stages', '[{"key":"novo","label":"Novo","position":10,"active":true},{"key":"em_atendimento","label":"Em atendimento","position":20,"active":true},{"key":"simulacao","label":"Simulação","position":30,"active":true},{"key":"em_analise","label":"Em analise","position":40,"active":true},{"key":"digitacao","label":"Digitacao","position":50,"active":true},{"key":"seguro_ap","label":"Seguro AP","position":60,"active":true},{"key":"assinatura","label":"Assinatura","position":70,"active":true},{"key":"pagamento","label":"Pagamento","position":80,"active":true},{"key":"ganho","label":"Ganho","position":90,"active":true},{"key":"perdido","label":"Perdido","position":100,"active":true}]')
 ON CONFLICT (key) DO NOTHING;
 `;
