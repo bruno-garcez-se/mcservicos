@@ -12,6 +12,8 @@ import {
   createLoanInteraction,
   createLoanProduct,
   createLoanSimulation,
+  createLoanPipelineStage,
+  deleteLoanPipelineStage,
   deleteLoanClient,
   completeLoanAgendaItem,
   getLoanClientById,
@@ -25,16 +27,20 @@ import {
   listServidoresImportados,
   listRubricasDescontoServidores,
   listLoanSellers,
+  listLoanPipelineStages,
   listLoanClients,
-  listLoanInteractions,
+  listLoanOpportunities,
+  listLoanTimeline,
   listLoanProducts,
   listLoanSimulations,
   markLoanClientActivityTouch,
   simularServidorAgora,
   updateLoanClient,
   updateLoanClientHeatBadge,
+  updateLoanClientLossMargin,
   updateLoanSettings,
   updateLoanClientStatus,
+  updateLoanPipelineStages,
   rescheduleLoanAgendaItem,
 } from "../services/loansApi";
 import {
@@ -43,6 +49,9 @@ import {
   LoanClient,
   LoanClientStatus,
   LoanFunnelOutcomeReport,
+  LoanOpportunity,
+  LoanPipelineStage,
+  LoanTimelineItem,
   LoanProductType,
 } from "../types";
 
@@ -64,7 +73,7 @@ const DEFAULT_NEGOCIAL_SECTION_VISIBILITY: NegocialSectionVisibility = {
   relatorios: true,
 };
 
-const statusFlow: Array<{ key: LoanClientStatus; label: string }> = [
+const DEFAULT_STATUS_FLOW: Array<{ key: LoanClientStatus; label: string }> = [
   { key: "novo", label: "Novo" },
   { key: "em_atendimento", label: "Em atendimento" },
   { key: "simulacao", label: "Simulação" },
@@ -76,13 +85,14 @@ const statusFlow: Array<{ key: LoanClientStatus; label: string }> = [
   { key: "ganho", label: "Ganho" },
   { key: "perdido", label: "Perdido" },
 ];
-const EMPTY_KANBAN_TOTALS = statusFlow.reduce(
+const TERMINAL_FUNNEL_STATUS = new Set<LoanClientStatus>(["ganho", "perdido"]);
+const EMPTY_KANBAN_TOTALS = DEFAULT_STATUS_FLOW.reduce(
   (acc, item) => ({ ...acc, [item.key]: 0 }),
-  {} as Record<LoanClientStatus, number>,
+  {} as Record<string, number>,
 );
-const EMPTY_KANBAN_CARDS = statusFlow.reduce(
+const EMPTY_KANBAN_CARDS = DEFAULT_STATUS_FLOW.reduce(
   (acc, item) => ({ ...acc, [item.key]: [] as LoanClient[] }),
-  {} as Record<LoanClientStatus, LoanClient[]>,
+  {} as Record<string, LoanClient[]>,
 );
 type CadastroSortBy =
   | "name"
@@ -350,6 +360,17 @@ function CalendarPlusIcon() {
   );
 }
 
+function CycleHistoryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 4a8 8 0 1 1-7.75 10h2.06a6 6 0 1 0 1.9-6.14l1.79 1.79H5V5l1.83 1.83A7.96 7.96 0 0 1 12 4Zm-.75 4a1 1 0 1 1 2 0v3.38l2.45 1.42a1 1 0 0 1-1 1.74l-2.95-1.7a1 1 0 0 1-.5-.87V8Z"
+      />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -477,17 +498,8 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   >([]);
   const [dashboard, setDashboard] = useState<LoanDashboardState | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
-  const [interactions, setInteractions] = useState<
-    Array<{
-      id: number;
-      notes: string;
-      channel: string;
-      createdAt: string;
-      scheduledFor?: string | null;
-      completedAt?: string | null;
-      userName?: string;
-    }>
-  >([]);
+  const [timelineItems, setTimelineItems] = useState<LoanTimelineItem[]>([]);
+  const [opportunities, setOpportunities] = useState<LoanOpportunity[]>([]);
   const [agendaItems, setAgendaItems] = useState<LoanAgendaItem[]>([]);
   const [agendaStatusFilter, setAgendaStatusFilter] = useState<"all" | "pending" | "completed">("all");
   const [agendaViewMode, setAgendaViewMode] = useState<"calendar" | "list">(() => {
@@ -500,6 +512,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     return "calendar";
   });
   const [isQuickAgendaModalOpen, setIsQuickAgendaModalOpen] = useState(false);
+  const [selectedAgendaItem, setSelectedAgendaItem] = useState<LoanAgendaItem | null>(null);
+  const [quickAgendaClientQuery, setQuickAgendaClientQuery] = useState("");
+  const [quickAgendaClientResults, setQuickAgendaClientResults] = useState<LoanClient[]>([]);
+  const [isQuickAgendaClientDropdownOpen, setIsQuickAgendaClientDropdownOpen] = useState(false);
+  const [isLoadingQuickAgendaClients, setIsLoadingQuickAgendaClients] = useState(false);
   const [isSavingQuickAgenda, setIsSavingQuickAgenda] = useState(false);
   const [quickAgendaForm, setQuickAgendaForm] = useState({
     clientId: "",
@@ -540,6 +557,18 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const [loanSection, setLoanSection] = useState<
     "cadastro" | "funil" | "agenda" | "importacoes" | "comissao" | "relatorios"
   >(defaultSection);
+  const [pipelineStages, setPipelineStages] = useState<LoanPipelineStage[]>([]);
+  const [isStageConfigOpen, setIsStageConfigOpen] = useState(false);
+  const [stageConfigItems, setStageConfigItems] = useState<Array<{ key: string; label: string; active: boolean }>>([]);
+  const [newStageLabel, setNewStageLabel] = useState("");
+  const [isSavingStageConfig, setIsSavingStageConfig] = useState(false);
+  const statusFlow = useMemo(() => {
+    const activeStages = pipelineStages
+      .filter((item) => item.active)
+      .sort((a, b) => a.position - b.position)
+      .map((item) => ({ key: item.key as LoanClientStatus, label: item.label }));
+    return activeStages.length > 0 ? activeStages : DEFAULT_STATUS_FLOW;
+  }, [pipelineStages]);
 
   useEffect(() => {
     if (!resolvedSectionVisibility[loanSection]) {
@@ -603,8 +632,12 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const [isSimulationModalOpen, setIsSimulationModalOpen] = useState(false);
   const [isActivityModalOpen, setIsActivityModalOpen] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [isCycleHistoryModalOpen, setIsCycleHistoryModalOpen] = useState(false);
   const [isHeatBadgeMenuOpen, setIsHeatBadgeMenuOpen] = useState(false);
   const [isLostReasonModalOpen, setIsLostReasonModalOpen] = useState(false);
+  const [timelineFilter, setTimelineFilter] = useState<
+    "all" | "activity" | "status" | "agenda" | "simulation" | "loss" | "client" | "event"
+  >("all");
   const [lostReasonText, setLostReasonText] = useState("");
   const [lostHasMargin, setLostHasMargin] = useState<"" | "sim" | "nao">("");
   const [isSummaryEditing, setIsSummaryEditing] = useState(false);
@@ -858,8 +891,8 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     total: 0,
     totalPages: 1,
   });
-  const [kanbanColumnTotals, setKanbanColumnTotals] = useState<Record<LoanClientStatus, number>>(EMPTY_KANBAN_TOTALS);
-  const [kanbanCardsByStatus, setKanbanCardsByStatus] = useState<Record<LoanClientStatus, LoanClient[]>>(
+  const [kanbanColumnTotals, setKanbanColumnTotals] = useState<Record<string, number>>(EMPTY_KANBAN_TOTALS);
+  const [kanbanCardsByStatus, setKanbanCardsByStatus] = useState<Record<string, LoanClient[]>>(
     EMPTY_KANBAN_CARDS,
   );
   const defaultSellerFilter = isAdmin ? "" : String(user?.id ?? "");
@@ -910,6 +943,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   });
   const [funnelOutcomeReport, setFunnelOutcomeReport] = useState<LoanFunnelOutcomeReport | null>(null);
   const [funnelOutcomeReportLoading, setFunnelOutcomeReportLoading] = useState(false);
+  const [updatingLossMarginClientId, setUpdatingLossMarginClientId] = useState<number | null>(null);
   const [servidoresFiltro, setServidoresFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(SERVIDORES_FILTERS_STORAGE_KEY);
@@ -1002,6 +1036,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   }, [servidoresFiltro, servidoresPaginacao.page, servidoresPaginacao.pageSize]);
   const [debouncedKanbanSearch, setDebouncedKanbanSearch] = useState(clientesFiltro.busca);
   const [debouncedCadastroSearch, setDebouncedCadastroSearch] = useState(cadastroFiltro.busca);
+  const statusFlowKey = useMemo(() => statusFlow.map((item) => item.key).join("|"), [statusFlow]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setDebouncedKanbanSearch(clientesFiltro.busca);
@@ -1030,6 +1065,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       };
     },
     [
+      statusFlowKey,
       debouncedKanbanSearch,
       clientesFiltro.monthRef,
       clientesFiltro.status,
@@ -1064,12 +1100,39 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       }),
     [agendaItems],
   );
-  const quickAgendaClients = useMemo(() => {
-    const map = new Map<number, LoanClient>();
-    for (const client of clients) map.set(client.id, client);
-    for (const client of cadastroClientes) map.set(client.id, client);
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-  }, [clients, cadastroClientes]);
+  useEffect(() => {
+    if (!isQuickAgendaModalOpen) return;
+    const term = quickAgendaClientQuery.trim();
+    if (term.length < 2) {
+      setQuickAgendaClientResults([]);
+      setIsLoadingQuickAgendaClients(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setIsLoadingQuickAgendaClients(true);
+      try {
+        const response = await listLoanClients({
+          search: term,
+          page: 1,
+          limit: 50,
+        });
+        if (cancelled) return;
+        setQuickAgendaClientResults(response.items);
+      } catch {
+        if (cancelled) return;
+        setQuickAgendaClientResults([]);
+      } finally {
+        if (!cancelled) setIsLoadingQuickAgendaClients(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [isQuickAgendaModalOpen, quickAgendaClientQuery]);
   const cadastroQuery = useMemo(
     () => {
       const statusNormalizado = statusFlow.some((item) => item.key === cadastroFiltro.status)
@@ -1087,6 +1150,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       };
     },
     [
+      statusFlowKey,
       debouncedCadastroSearch,
       cadastroFiltro.source,
       cadastroFiltro.vendedorId,
@@ -1371,6 +1435,108 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     }
   }
 
+  async function loadPipelineStagesData(): Promise<void> {
+    try {
+      const stages = await listLoanPipelineStages();
+      const sorted = [...stages].sort((a, b) => a.position - b.position);
+      setPipelineStages(sorted);
+    } catch {
+      setPipelineStages(
+        DEFAULT_STATUS_FLOW.map((item, index) => ({
+          key: item.key,
+          label: item.label,
+          active: true,
+          position: (index + 1) * 10,
+        })),
+      );
+      setMessage("Falha ao carregar configuração das colunas do funil.");
+    }
+  }
+
+  const onOpenStageConfig = () => {
+    const source =
+      pipelineStages.length > 0
+        ? pipelineStages
+        : DEFAULT_STATUS_FLOW.map((item, index) => ({
+            key: item.key,
+            label: item.label,
+            active: true,
+            position: (index + 1) * 10,
+          }));
+    setStageConfigItems(
+      [...source]
+        .sort((a, b) => a.position - b.position)
+        .map((item) => ({ key: item.key, label: item.label, active: item.active })),
+    );
+    setNewStageLabel("");
+    setIsStageConfigOpen(true);
+  };
+
+  const onMoveStageConfigItem = (index: number, direction: -1 | 1) => {
+    setStageConfigItems((current) => {
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= current.length) return current;
+      const next = [...current];
+      const [moved] = next.splice(index, 1);
+      next.splice(targetIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const onDeleteStageConfigItem = async (key: string) => {
+    if (!window.confirm("Deseja realmente excluir esta coluna do funil?")) return;
+    setIsSavingStageConfig(true);
+    try {
+      await deleteLoanPipelineStage(key);
+      await loadPipelineStagesData();
+      setStageConfigItems((current) => current.filter((item) => item.key !== key));
+      setMessage("Coluna do funil excluída.");
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Não foi possível excluir a coluna do funil."));
+    } finally {
+      setIsSavingStageConfig(false);
+    }
+  };
+
+  const onCreateStageConfigItem = async () => {
+    if (!newStageLabel.trim()) return;
+    setIsSavingStageConfig(true);
+    try {
+      await createLoanPipelineStage(newStageLabel.trim());
+      await loadPipelineStagesData();
+      setNewStageLabel("");
+      setMessage("Nova coluna do funil criada.");
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Não foi possível criar a nova coluna."));
+    } finally {
+      setIsSavingStageConfig(false);
+    }
+  };
+
+  const onSaveStageConfig = async () => {
+    if (stageConfigItems.length === 0) {
+      setMessage("O funil precisa de ao menos uma coluna.");
+      return;
+    }
+    if (!stageConfigItems.some((item) => item.active)) {
+      setMessage("Mantenha ao menos uma coluna ativa.");
+      return;
+    }
+    setIsSavingStageConfig(true);
+    try {
+      const saved = await updateLoanPipelineStages(stageConfigItems);
+      setPipelineStages(saved);
+      setIsStageConfigOpen(false);
+      setMessage("Configuração do funil atualizada.");
+      invalidateLoanViewCaches();
+      await refreshVisibleLoanData({ includeCadastro: true, includeAgenda: true });
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Não foi possível salvar as colunas do funil."));
+    } finally {
+      setIsSavingStageConfig(false);
+    }
+  };
+
   async function loadClientsData(): Promise<void> {
     try {
       if (clientesQuery.status) {
@@ -1384,7 +1550,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
           limit: clientesQuery.limit,
         });
         setClients(response.items);
-        const byStatus: Record<LoanClientStatus, LoanClient[]> = { ...EMPTY_KANBAN_CARDS };
+        const byStatus: Record<string, LoanClient[]> = { ...EMPTY_KANBAN_CARDS };
         byStatus[clientesQuery.status] = response.items;
         setKanbanCardsByStatus(byStatus);
         setClientesPaginacao((prev) => ({
@@ -1394,7 +1560,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
           total: response.total,
           totalPages: response.totalPages,
         }));
-        const totalsByStatus: Record<LoanClientStatus, number> = { ...EMPTY_KANBAN_TOTALS };
+        const totalsByStatus: Record<string, number> = { ...EMPTY_KANBAN_TOTALS };
         totalsByStatus[clientesQuery.status] = response.total;
         setKanbanColumnTotals(totalsByStatus);
         setSelectedClientId((prev) =>
@@ -1424,10 +1590,10 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         );
         const totals = Object.fromEntries(
           responsesByStatus.map(([status, result]) => [status, result.total]),
-        ) as Record<LoanClientStatus, number>;
+        ) as Record<string, number>;
         const cardsByStatus = Object.fromEntries(
           responsesByStatus.map(([status, result]) => [status, result.items]),
-        ) as Record<LoanClientStatus, LoanClient[]>;
+        ) as Record<string, LoanClient[]>;
         const flattened = statusFlow.flatMap((column) => cardsByStatus[column.key] ?? []);
         const deduped = Array.from(new Map(flattened.map((item) => [item.id, item])).values());
         const total = statusFlow.reduce((acc, column) => acc + (totals[column.key] ?? 0), 0);
@@ -1497,21 +1663,48 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         monthRef: /^\d{4}-\d{2}$/.test(relatoriosFiltro.monthRef) ? relatoriosFiltro.monthRef : undefined,
       });
       setFunnelOutcomeReport(data);
-    } catch {
-      setMessage("Falha ao carregar relatórios do funil.");
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Falha ao carregar relatórios do funil."));
     } finally {
       setFunnelOutcomeReportLoading(false);
     }
   }
 
+  async function onAdminChangeLossMargin(item: LoanFunnelOutcomeReport["items"][number], nextValue: "sim" | "nao"): Promise<void> {
+    if (!isAdmin || item.status !== "perdido") return;
+    const nextHasMargin = nextValue === "sim";
+    setUpdatingLossMarginClientId(item.id);
+    try {
+      await updateLoanClientLossMargin(item.id, nextHasMargin);
+      setFunnelOutcomeReport((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          items: current.items.map((entry) =>
+            entry.id === item.id
+              ? { ...entry, lostHasMargin: nextHasMargin }
+              : entry,
+          ),
+        };
+      });
+      setMessage("Margem da perda atualizada.");
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Não foi possível atualizar a margem da perda."));
+    } finally {
+      setUpdatingLossMarginClientId(null);
+    }
+  }
+
   async function loadClientDetails(clientId: number): Promise<void> {
     try {
-      const [interactionsData, simulationsData] = await Promise.all([
-        listLoanInteractions(clientId),
+      const [simulationsData, opportunitiesData, timelineData] = await Promise.all([
         listLoanSimulations(clientId),
+        listLoanOpportunities(clientId),
+        listLoanTimeline(clientId),
       ]);
-      setInteractions(interactionsData);
       setSimulations(simulationsData);
+      setOpportunities(opportunitiesData);
+      setTimelineItems(timelineData);
     } catch {
       setMessage("Falha ao carregar detalhes do cliente.");
     }
@@ -1587,6 +1780,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     void loadMainData({ silent: false });
     void loadRubricasDescontoOptions();
     void loadSellerOptions();
+    void loadPipelineStagesData();
     if (isAdmin) {
       void loadLoanSettings();
     }
@@ -1596,6 +1790,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     if (loading) return;
     void loadClientsData();
   }, [clientesQuery, loading]);
+
+  useEffect(() => {
+    const validStatusKeys = new Set(statusFlow.map((item) => item.key));
+    if (clientesFiltro.status && !validStatusKeys.has(clientesFiltro.status as LoanClientStatus)) {
+      setClientesFiltro((prev) => ({ ...prev, status: "" }));
+    }
+    if (cadastroFiltro.status && !validStatusKeys.has(cadastroFiltro.status as LoanClientStatus)) {
+      setCadastroFiltro((prev) => ({ ...prev, status: "" }));
+    }
+  }, [statusFlow, clientesFiltro.status, cadastroFiltro.status]);
 
   useEffect(() => {
     if (loading) return;
@@ -1736,13 +1940,18 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
 
   useEffect(() => {
     if (!selectedClientId) {
-      setInteractions([]);
+      setTimelineItems([]);
+      setTimelineFilter("all");
       setSimulations([]);
+      setOpportunities([]);
+      setIsCycleHistoryModalOpen(false);
       setInteractionScheduledFor("");
       return;
     }
-    setInteractions([]);
+    setTimelineItems([]);
+    setTimelineFilter("all");
     setSimulations([]);
+    setOpportunities([]);
     setInteractionScheduledFor("");
     void loadClientDetails(selectedClientId);
   }, [selectedClientId]);
@@ -1912,7 +2121,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       if (!moving || moving.status === status) return current;
       const next = Object.fromEntries(
         statusFlow.map((column) => [column.key, (current[column.key] ?? []).filter((item) => item.id !== clientId)]),
-      ) as Record<LoanClientStatus, LoanClient[]>;
+      ) as Record<string, LoanClient[]>;
       next[status] = [...next[status], { ...moving, status }];
       return next;
     });
@@ -1924,10 +2133,10 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       window.setTimeout(() => {
         setRecentlyMovedClientId((current) => (current === clientId ? null : current));
       }, 1200);
-    } catch {
+    } catch (error) {
       setClients(previous);
       setKanbanCardsByStatus(previousByStatus);
-      setMessage("Não foi possível atualizar status.");
+      setMessage(extractApiMessage(error, "Não foi possível atualizar status."));
     }
   };
 
@@ -1986,8 +2195,12 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         : new Date();
     setQuickAgendaForm((prev) => ({
       ...prev,
+      clientId: "",
       scheduledFor: toDateTimeLocalValue(startDate),
     }));
+    setQuickAgendaClientQuery("");
+    setQuickAgendaClientResults([]);
+    setIsQuickAgendaClientDropdownOpen(false);
     setIsQuickAgendaModalOpen(true);
   };
 
@@ -2028,6 +2241,9 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         notes: "",
         scheduledFor: "",
       });
+      setQuickAgendaClientQuery("");
+      setQuickAgendaClientResults([]);
+      setIsQuickAgendaClientDropdownOpen(false);
       setIsQuickAgendaModalOpen(false);
       invalidateLoanViewCaches();
       await refreshVisibleLoanData({ includeAgenda: true });
@@ -2441,6 +2657,14 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     }
   };
 
+  const onOpenAgendaDetailsModal = (item: LoanAgendaItem) => {
+    setSelectedAgendaItem(item);
+  };
+
+  const onCloseAgendaDetailsModal = () => {
+    setSelectedAgendaItem(null);
+  };
+
   const onConcluirAgendaItem = async (item: LoanAgendaItem) => {
     const confirmed = window.confirm(`Concluir o agendamento de ${item.clientName}?`);
     if (!confirmed) return;
@@ -2563,9 +2787,81 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     return "pending";
   };
   const getNextStatus = (status: LoanClientStatus): LoanClientStatus | null => {
+    if (isTerminalFlowStatus(status)) return null;
     const currentIndex = statusFlow.findIndex((item) => item.key === status);
     if (currentIndex < 0 || currentIndex >= statusFlow.length - 1) return null;
     return statusFlow[currentIndex + 1]?.key ?? null;
+  };
+  const getStatusLabel = (status: LoanClientStatus): string => {
+    return statusFlow.find((item) => item.key === status)?.label ?? status;
+  };
+  const isTerminalFlowStatus = (status: LoanClientStatus): boolean => {
+    if (TERMINAL_FUNNEL_STATUS.has(status)) return true;
+    const stage = statusFlow.find((item) => item.key === status);
+    if (!stage) return false;
+    const normalized = stage.label
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+    return normalized.includes("ganho") || normalized.includes("perdido") || normalized.includes("perda");
+  };
+  const getTimelineCategory = (
+    item: LoanTimelineItem,
+  ): "activity" | "status" | "agenda" | "simulation" | "loss" | "client" | "event" => {
+    if (item.kind === "interaction") {
+      return "activity";
+    }
+    if (item.action === "loan.client.status") {
+      return "status";
+    }
+    if (item.action?.startsWith("loan.agenda.")) {
+      return "agenda";
+    }
+    if (item.action === "loan.simulation.create") {
+      return "simulation";
+    }
+    if (item.action === "loan.client.loss_margin.update") {
+      return "loss";
+    }
+    if (item.action?.startsWith("loan.client.")) {
+      return "client";
+    }
+    return "event";
+  };
+  const getTimelineMeta = (item: LoanTimelineItem): { label: string; className: string } => {
+    const category = getTimelineCategory(item);
+    if (category === "activity") return { label: "Atividade", className: "timeline-activity" };
+    if (category === "status") return { label: "Status", className: "timeline-status" };
+    if (category === "agenda") return { label: "Agenda", className: "timeline-agenda" };
+    if (category === "simulation") return { label: "Simulação", className: "timeline-simulation" };
+    if (category === "loss") return { label: "Perda", className: "timeline-loss" };
+    if (category === "client") return { label: "Cliente", className: "timeline-client" };
+    return { label: "Evento", className: "timeline-event" };
+  };
+  const filteredTimelineItems = useMemo(() => {
+    if (timelineFilter === "all") return timelineItems;
+    return timelineItems.filter((item) => getTimelineCategory(item) === timelineFilter);
+  }, [timelineItems, timelineFilter]);
+  const timelineCounts = useMemo(() => {
+    const counts = {
+      all: timelineItems.length,
+      activity: 0,
+      status: 0,
+      agenda: 0,
+      simulation: 0,
+      loss: 0,
+      client: 0,
+      event: 0,
+    };
+    for (const item of timelineItems) {
+      const category = getTimelineCategory(item);
+      counts[category] += 1;
+    }
+    return counts;
+  }, [timelineItems]);
+  const getFirstCycleStatus = (): LoanClientStatus | null => {
+    const firstNonTerminal = statusFlow.find((item) => !isTerminalFlowStatus(item.key));
+    return firstNonTerminal?.key ?? statusFlow[0]?.key ?? null;
   };
   const onMoveClientToStatus = async (client: LoanClient, status: LoanClientStatus, reason?: string) => {
     setMovingNextStageClientId(client.id);
@@ -2588,6 +2884,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     const nextStatus = getNextStatus(client.status);
     if (!nextStatus) return;
     await onMoveClientToStatus(client, nextStatus);
+  };
+  const onRestartClientCycle = async (client: LoanClient) => {
+    const firstStatus = getFirstCycleStatus();
+    if (!firstStatus) {
+      setMessage("Nenhuma etapa disponível para iniciar novo ciclo.");
+      return;
+    }
+    if (client.status === firstStatus) return;
+    await onMoveClientToStatus(client, firstStatus);
+    setMessage("Novo ciclo iniciado para o cliente.");
   };
   const onOpenLostReasonModal = () => {
     setLostReasonText("");
@@ -2634,7 +2940,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               item.id === clientId ? { ...item, heatBadge } : item,
             ),
           }),
-          {} as Record<LoanClientStatus, LoanClient[]>,
+          {} as Record<string, LoanClient[]>,
         ),
       );
       setMessage("Badge atualizado.");
@@ -2729,7 +3035,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         } as CSSProperties,
       };
     }
-    const colorsByStatus: Record<LoanClientStatus, { bg: string; border: string; text: string }> = {
+    const colorsByStatus: Record<string, { bg: string; border: string; text: string }> = {
       novo: { bg: "#eff6ff", border: "#9ec4ef", text: "#184a77" },
       em_atendimento: { bg: "#eef9f4", border: "#93d7b5", text: "#1e6b44" },
       simulacao: { bg: "#fff8e9", border: "#f0cf8a", text: "#8a6100" },
@@ -3064,6 +3370,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               <MenuFunilIcon />
               <span>Funil de Vendas</span>
             </h3>
+            {isAdmin ? (
+              <button type="button" className="loan-filter-clear-button" onClick={onOpenStageConfig}>
+                Configurar colunas
+              </button>
+            ) : null}
           </div>
           <div className="loan-metrics">
             <article>
@@ -3760,33 +4071,47 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                   onClick={() => {
                     setIsClientDetailsModalOpen(false);
                     setIsLostReasonModalOpen(false);
+                    setIsCycleHistoryModalOpen(false);
                   }}
                 >
                   X
                 </button>
                 <div className="loan-client-modal-stage-actions">
-                  <button
-                    type="button"
-                    className="danger-button loan-stage-left"
-                    onClick={onOpenLostReasonModal}
-                    disabled={selectedClient.status === "perdido" || movingNextStageClientId === selectedClient.id}
-                  >
-                    Perdido
-                  </button>
-                  <button
-                    type="button"
-                    className="primary-button loan-next-stage-button loan-stage-right"
-                    onClick={() => void onMoveToNextStage(selectedClient)}
-                    disabled={!getNextStatus(selectedClient.status) || movingNextStageClientId === selectedClient.id}
-                  >
-                    <span>
-                      {movingNextStageClientId === selectedClient.id
-                        ? "Movendo..."
-                        : statusFlow.find((item) => item.key === getNextStatus(selectedClient.status))?.label ??
-                          "Próxima etapa"}
-                    </span>
-                    <ArrowRightIcon />
-                  </button>
+                  {isTerminalFlowStatus(selectedClient.status) ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => void onRestartClientCycle(selectedClient)}
+                      disabled={movingNextStageClientId === selectedClient.id || !getFirstCycleStatus()}
+                    >
+                      Iniciar novo ciclo
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className="danger-button loan-stage-left"
+                        onClick={onOpenLostReasonModal}
+                        disabled={selectedClient.status === "perdido" || movingNextStageClientId === selectedClient.id}
+                      >
+                        Perdido
+                      </button>
+                      <button
+                        type="button"
+                        className="primary-button loan-next-stage-button loan-stage-right"
+                        onClick={() => void onMoveToNextStage(selectedClient)}
+                        disabled={!getNextStatus(selectedClient.status) || movingNextStageClientId === selectedClient.id}
+                      >
+                        <span>
+                          {movingNextStageClientId === selectedClient.id
+                            ? "Movendo..."
+                            : statusFlow.find((item) => item.key === getNextStatus(selectedClient.status))?.label ??
+                              "Próxima etapa"}
+                        </span>
+                        <ArrowRightIcon />
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -3802,6 +4127,15 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 }}
               >
                 <ActivityIcon />
+              </button>
+              <button
+                type="button"
+                className="loan-client-modal-icon-action"
+                data-tooltip="Histórico de ciclos"
+                aria-label="Histórico de ciclos"
+                onClick={() => setIsCycleHistoryModalOpen(true)}
+              >
+                <CycleHistoryIcon />
               </button>
               <button
                 type="button"
@@ -4050,19 +4384,96 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               </div>
             </section>
             <div className="loan-history">
-              <h4>Histórico de Atividades</h4>
-              {interactions.map((item) => (
-                <article key={item.id}>
-                  <p>{item.notes}</p>
-                  <small>
-                    {new Date(item.createdAt).toLocaleString("pt-BR")} - {getChannelLabel(item.channel)}
-                    {item.userName ? ` - ${item.userName}` : ""}
-                    {item.scheduledFor
-                      ? ` - Próximo contato: ${new Date(item.scheduledFor).toLocaleString("pt-BR")}`
-                      : ""}
-                  </small>
-                </article>
-              ))}
+              <div className="section-header-row">
+                <h4>Histórico</h4>
+              </div>
+              <div className="loan-history-filters">
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "all" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("all")}
+                >
+                  Todos ({timelineCounts.all})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "activity" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("activity")}
+                >
+                  Atividades ({timelineCounts.activity})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "status" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("status")}
+                >
+                  Status ({timelineCounts.status})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "agenda" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("agenda")}
+                >
+                  Agenda ({timelineCounts.agenda})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "simulation" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("simulation")}
+                >
+                  Simulações ({timelineCounts.simulation})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "loss" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("loss")}
+                >
+                  Perdas ({timelineCounts.loss})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "client" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("client")}
+                >
+                  Cliente ({timelineCounts.client})
+                </button>
+                <button
+                  type="button"
+                  className={`loan-history-filter-button ${timelineFilter === "event" ? "active" : ""}`}
+                  onClick={() => setTimelineFilter("event")}
+                >
+                  Eventos ({timelineCounts.event})
+                </button>
+              </div>
+              {filteredTimelineItems.length === 0 ? (
+                <p className="muted-text">Sem registros para este cliente.</p>
+              ) : (
+                filteredTimelineItems.map((item) => {
+                  const meta = getTimelineMeta(item);
+                  const metaLine = [
+                    new Date(item.createdAt).toLocaleString("pt-BR"),
+                    item.actorUserName ?? null,
+                    item.scheduledFor ? `Agendado para: ${new Date(item.scheduledFor).toLocaleString("pt-BR")}` : null,
+                    item.completedAt ? `Concluído em: ${new Date(item.completedAt).toLocaleString("pt-BR")}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" - ");
+                  return (
+                    <article key={item.id} className={`loan-history-item ${meta.className}`}>
+                      <div className="loan-history-head loan-history-head-single-line">
+                        <span className={`loan-history-chip ${meta.className}`}>{meta.label}</span>
+                        <strong className="loan-history-title-inline">{item.title}</strong>
+                        {item.description ? (
+                          <span className="loan-history-description-inline" title={item.description}>
+                            {item.description}
+                          </span>
+                        ) : null}
+                        <small className="loan-history-meta-inline">{metaLine}</small>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
             </div>
           </section>
         </div>
@@ -4165,6 +4576,64 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
           </section>
         </div>
       ) : null}
+      {isClientDetailsModalOpen && selectedClient && isCycleHistoryModalOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-loan-template" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h3>Histórico de ciclos do funil</h3>
+              <button type="button" onClick={() => setIsCycleHistoryModalOpen(false)}>
+                X
+              </button>
+            </div>
+            <div className="loan-opportunity-history">
+              {opportunities.length === 0 ? (
+                <p className="muted-text">Nenhum ciclo encontrado para este cliente.</p>
+              ) : (
+                <div className="loan-opportunity-history-list">
+                  {opportunities.map((cycle) => (
+                    <article key={cycle.id} className="loan-opportunity-history-card">
+                      <div className="loan-opportunity-history-head">
+                        <strong>Ciclo #{cycle.cycleNumber}</strong>
+                        <span>
+                          {cycle.outcome === "ganho"
+                            ? "Fechado como ganho"
+                            : cycle.outcome === "perdido"
+                              ? "Fechado como perdido"
+                              : "Em andamento"}
+                        </span>
+                      </div>
+                      <p>
+                        <strong>Status:</strong> {getStatusLabel(cycle.status)}
+                      </p>
+                      <p>
+                        <strong>Origem:</strong> {cycle.source || "-"}
+                      </p>
+                      <p>
+                        <strong>Vendedor:</strong> {cycle.assignedUserName || "-"}
+                      </p>
+                      <p>
+                        <strong>Início:</strong> {new Date(cycle.openedAt).toLocaleString("pt-BR")}
+                      </p>
+                      <p>
+                        <strong>Fechamento:</strong>{" "}
+                        {cycle.closedAt ? new Date(cycle.closedAt).toLocaleString("pt-BR") : "Ainda aberto"}
+                      </p>
+                      {cycle.outcome === "perdido" ? (
+                        <p>
+                          <strong>Motivo da perda:</strong> {cycle.lossReason || "Não informado"}
+                          {cycle.lossHasMargin !== null
+                            ? ` | Possui margem: ${cycle.lossHasMargin ? "Sim" : "Não"}`
+                            : ""}
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      ) : null}
       {isClientDetailsModalOpen && selectedClient && isScheduleModalOpen ? (
         <div className="modal-backdrop">
           <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
@@ -4251,8 +4720,12 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 onClick={() => {
                   setQuickAgendaForm((prev) => ({
                     ...prev,
+                    clientId: "",
                     scheduledFor: prev.scheduledFor || getDefaultScheduleDateTimeLocal(),
                   }));
+                  setQuickAgendaClientQuery("");
+                  setQuickAgendaClientResults([]);
+                  setIsQuickAgendaClientDropdownOpen(false);
                   setIsQuickAgendaModalOpen(true);
                 }}
               >
@@ -4320,7 +4793,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 onSelectEvent={(event: unknown) => {
                   const item = (event as { resource?: LoanAgendaItem }).resource;
                   if (!item) return;
-                  void onOpenAgendaClient(item);
+                  onOpenAgendaDetailsModal(item);
                 }}
               />
             </div>
@@ -4346,7 +4819,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 </tr>
               ) : (
                 agendaItems.map((item) => (
-                  <tr key={item.id}>
+                  <tr
+                    key={item.id}
+                    className="loan-agenda-row-clickable"
+                    onClick={() => onOpenAgendaDetailsModal(item)}
+                  >
                     <td>{new Date(item.scheduledFor).toLocaleString("pt-BR")}</td>
                     <td>{item.clientName}</td>
                     <td>{statusFlow.find((status) => status.key === item.status)?.label ?? item.status}</td>
@@ -4363,9 +4840,12 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                         <button
                           type="button"
                           className="transaction-icon-button"
-                          title="Abrir cliente"
-                          aria-label="Abrir cliente"
-                          onClick={() => void onOpenAgendaClient(item)}
+                          title="Ver detalhes do agendamento"
+                          aria-label="Ver detalhes do agendamento"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onOpenAgendaDetailsModal(item);
+                          }}
                         >
                           <OpenClientIcon />
                         </button>
@@ -4374,7 +4854,10 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                           className={`loan-agenda-action-button ${item.completedAt ? "is-done" : "is-pending"}`}
                           title={item.completedAt ? "Concluído" : "Concluir"}
                           disabled={Boolean(item.completedAt) || loadingAgendaCompleteId === item.id}
-                          onClick={() => void onConcluirAgendaItem(item)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void onConcluirAgendaItem(item);
+                          }}
                         >
                           {item.completedAt || loadingAgendaCompleteId === item.id ? (
                             <CheckDoneIcon />
@@ -4397,27 +4880,66 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
           <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
             <div className="section-header-row">
               <h3>Novo agendamento</h3>
-              <button type="button" onClick={() => setIsQuickAgendaModalOpen(false)}>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsQuickAgendaModalOpen(false);
+                  setIsQuickAgendaClientDropdownOpen(false);
+                }}
+              >
                 X
               </button>
             </div>
             <form className="modal-form" onSubmit={onCreateQuickAgenda}>
               <label>
-                Cliente
-                <select
-                  required
-                  value={quickAgendaForm.clientId}
-                  onChange={(event) =>
-                    setQuickAgendaForm((prev) => ({ ...prev, clientId: event.target.value }))
-                  }
-                >
-                  <option value="">Selecione...</option>
-                  {quickAgendaClients.map((client) => (
-                    <option key={`quick-agenda-client-${client.id}`} value={String(client.id)}>
-                      {client.name}
-                    </option>
-                  ))}
-                </select>
+                Cliente (nome ou CPF)
+                <div className="quick-agenda-client-combobox">
+                  <input
+                    type="text"
+                    placeholder="Digite nome ou CPF para buscar"
+                    value={quickAgendaClientQuery}
+                    onFocus={() => setIsQuickAgendaClientDropdownOpen(true)}
+                    onBlur={() => {
+                      window.setTimeout(() => setIsQuickAgendaClientDropdownOpen(false), 120);
+                    }}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setQuickAgendaClientQuery(value);
+                      setQuickAgendaForm((prev) => ({ ...prev, clientId: "" }));
+                      setIsQuickAgendaClientDropdownOpen(true);
+                    }}
+                  />
+                  {isQuickAgendaClientDropdownOpen ? (
+                    <div className="quick-agenda-client-combobox-list">
+                      {quickAgendaClientQuery.trim().length < 2 ? (
+                        <div className="quick-agenda-client-combobox-empty">Digite ao menos 2 caracteres.</div>
+                      ) : isLoadingQuickAgendaClients ? (
+                        <div className="quick-agenda-client-combobox-empty">Buscando clientes...</div>
+                      ) : quickAgendaClientResults.length === 0 ? (
+                        <div className="quick-agenda-client-combobox-empty">Nenhum cliente encontrado.</div>
+                      ) : (
+                        quickAgendaClientResults.map((client) => (
+                          <button
+                            key={`quick-agenda-client-${client.id}`}
+                            type="button"
+                            className="quick-agenda-client-combobox-item"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              setQuickAgendaForm((prev) => ({ ...prev, clientId: String(client.id) }));
+                              setQuickAgendaClientQuery(
+                                `${client.name}${client.cpf ? ` - CPF ${client.cpf}` : ""}`,
+                              );
+                              setIsQuickAgendaClientDropdownOpen(false);
+                            }}
+                          >
+                            <span>{client.name}</span>
+                            <small>{client.cpf || "-"}</small>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                </div>
               </label>
               <label>
                 Data e hora
@@ -4461,6 +4983,58 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      ) : null}
+
+      {loanSection === "agenda" && selectedAgendaItem ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-compact" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h3>Detalhes do agendamento</h3>
+              <button type="button" onClick={onCloseAgendaDetailsModal}>
+                X
+              </button>
+            </div>
+            <div className="form-stack">
+              <p>
+                <strong>Cliente:</strong> {selectedAgendaItem.clientName}
+              </p>
+              <p>
+                <strong>Data e hora:</strong> {new Date(selectedAgendaItem.scheduledFor).toLocaleString("pt-BR")}
+              </p>
+              <p>
+                <strong>Status:</strong>{" "}
+                {statusFlow.find((status) => status.key === selectedAgendaItem.status)?.label ?? selectedAgendaItem.status}
+              </p>
+              <p>
+                <strong>Vendedor:</strong> {selectedAgendaItem.assignedUserName || "-"}
+              </p>
+              <p>
+                <strong>Canal:</strong> {getChannelLabel(selectedAgendaItem.channel)}
+              </p>
+              <p>
+                <strong>Situação:</strong> {selectedAgendaItem.completedAt ? "Concluído" : "Pendente"}
+              </p>
+              <p>
+                <strong>Observação:</strong> {selectedAgendaItem.notes?.trim() || "-"}
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button type="button" onClick={onCloseAgendaDetailsModal}>
+                Fechar
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  void onOpenAgendaClient(selectedAgendaItem);
+                  onCloseAgendaDetailsModal();
+                }}
+              >
+                Abrir card
+              </button>
+            </div>
           </section>
         </div>
       ) : null}
@@ -5726,8 +6300,8 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               <MenuRelatoriosIcon />
               <span>Relatórios do Funil</span>
             </h3>
-            <div className="row">
-              <label>
+            <div className="loan-report-actions">
+              <label className="loan-report-month-filter">
                 Competência
                 <select
                   value={relatoriosFiltro.monthRef}
@@ -5742,11 +6316,17 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                   ))}
                 </select>
               </label>
-              <button type="button" onClick={() => void loadFunnelOutcomeReportData()} disabled={funnelOutcomeReportLoading}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void loadFunnelOutcomeReportData()}
+                disabled={funnelOutcomeReportLoading}
+              >
                 {funnelOutcomeReportLoading ? "Atualizando..." : "Atualizar"}
               </button>
               <button
                 type="button"
+                className="loan-report-export-button"
                 onClick={onExportFunnelOutcomeReport}
                 disabled={funnelOutcomeReportLoading || filteredFunnelOutcomeReportItems.length === 0}
               >
@@ -5754,7 +6334,21 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               </button>
             </div>
           </div>
-          <div className="loan-client-filter-row">
+          <div className="loan-metrics loan-report-metrics">
+            <article>
+              <strong>{filteredFunnelOutcomeTotals.total}</strong>
+              <span>Total no relatório</span>
+            </article>
+            <article>
+              <strong>{filteredFunnelOutcomeTotals.ganho}</strong>
+              <span>Ganhos</span>
+            </article>
+            <article>
+              <strong>{filteredFunnelOutcomeTotals.perdido}</strong>
+              <span>Perdas</span>
+            </article>
+          </div>
+          <div className="loan-report-filters">
             <input
               placeholder="Buscar cliente (nome ou CPF)"
               value={relatoriosFiltro.busca}
@@ -5845,20 +6439,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               Limpar filtros
             </button>
           </div>
-          <div className="loan-metrics">
-            <article>
-              <strong>{filteredFunnelOutcomeTotals.total}</strong>
-              <span>Total no relatório</span>
-            </article>
-            <article>
-              <strong>{filteredFunnelOutcomeTotals.ganho}</strong>
-              <span>Ganhos</span>
-            </article>
-            <article>
-              <strong>{filteredFunnelOutcomeTotals.perdido}</strong>
-              <span>Perdas</span>
-            </article>
-          </div>
           <div className="table-wrapper">
             <table>
               <thead>
@@ -5893,7 +6473,29 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                     <td>{item.assignedUserName || "-"}</td>
                     <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString("pt-BR") : "-"}</td>
                     <td>
-                      {item.lostHasMargin === null ? "-" : item.lostHasMargin ? "Sim" : "Não"}
+                      {isAdmin && item.status === "perdido" ? (
+                        <select
+                          value={item.lostHasMargin === null ? "" : item.lostHasMargin ? "sim" : "nao"}
+                          disabled={updatingLossMarginClientId === item.id}
+                          onChange={(event) => {
+                            const value = event.target.value as "" | "sim" | "nao";
+                            if (!value) return;
+                            void onAdminChangeLossMargin(item, value);
+                          }}
+                        >
+                          <option value="" disabled>
+                            Selecione
+                          </option>
+                          <option value="sim">Sim</option>
+                          <option value="nao">Não</option>
+                        </select>
+                      ) : item.lostHasMargin === null ? (
+                        "-"
+                      ) : item.lostHasMargin ? (
+                        "Sim"
+                      ) : (
+                        "Não"
+                      )}
                     </td>
                     <td>{item.lostReason || "-"}</td>
                   </tr>
@@ -5907,6 +6509,113 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             </table>
           </div>
         </section>
+      ) : null}
+
+      {isStageConfigOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-loan-template" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h3>Configurar colunas do Funil</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isSavingStageConfig) setIsStageConfigOpen(false);
+                }}
+              >
+                X
+              </button>
+            </div>
+            <p className="section-subtitle">
+              Organização global para todos os usuários. Para excluir uma coluna, ela deve estar sem clientes.
+            </p>
+            <div className="loan-stage-config-list">
+              {stageConfigItems.map((item, index) => (
+                <div key={`stage-config-${item.key}`} className="loan-stage-config-row">
+                  <input
+                    value={item.label}
+                    onChange={(event) =>
+                      setStageConfigItems((current) =>
+                        current.map((entry) =>
+                          entry.key === item.key ? { ...entry, label: event.target.value } : entry,
+                        ),
+                      )
+                    }
+                    placeholder="Nome da coluna"
+                  />
+                  <label className="checkbox">
+                    <input
+                      type="checkbox"
+                      checked={item.active}
+                      onChange={(event) =>
+                        setStageConfigItems((current) =>
+                          current.map((entry) =>
+                            entry.key === item.key ? { ...entry, active: event.target.checked } : entry,
+                          ),
+                        )
+                      }
+                    />
+                    Ativa
+                  </label>
+                  <button
+                    type="button"
+                    className="transaction-icon-button"
+                    onClick={() => onMoveStageConfigItem(index, -1)}
+                    disabled={index === 0}
+                    title="Mover para cima"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="transaction-icon-button"
+                    onClick={() => onMoveStageConfigItem(index, 1)}
+                    disabled={index === stageConfigItems.length - 1}
+                    title="Mover para baixo"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    className="transaction-icon-button danger"
+                    onClick={() => void onDeleteStageConfigItem(item.key)}
+                    title="Excluir coluna"
+                    disabled={isSavingStageConfig}
+                  >
+                    X
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="loan-stage-config-create-row">
+              <input
+                value={newStageLabel}
+                onChange={(event) => setNewStageLabel(event.target.value)}
+                placeholder="Nome da nova coluna"
+              />
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void onCreateStageConfigItem()}
+                disabled={isSavingStageConfig || !newStageLabel.trim()}
+              >
+                Adicionar coluna
+              </button>
+            </div>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setIsStageConfigOpen(false)} disabled={isSavingStageConfig}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void onSaveStageConfig()}
+                disabled={isSavingStageConfig}
+              >
+                {isSavingStageConfig ? "Salvando..." : "Salvar colunas"}
+              </button>
+            </div>
+          </section>
+        </div>
       ) : null}
 
       {message ? (

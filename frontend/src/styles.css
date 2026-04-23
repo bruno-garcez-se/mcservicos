@@ -2603,6 +2603,79 @@ fieldset {
   align-items: end;
 }
 
+.loan-report-actions {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.loan-report-month-filter {
+  margin-bottom: 0;
+  min-width: 190px;
+}
+
+.loan-report-export-button {
+  border-color: #c8d9ee;
+  background: #f5f9ff;
+  color: #174773;
+  font-weight: 700;
+}
+
+.loan-report-export-button:hover {
+  background: #eaf3ff;
+}
+
+.loan-report-filters {
+  margin: 12px 0 16px;
+  display: grid;
+  gap: 10px;
+  align-items: end;
+  grid-template-columns: minmax(220px, 1.5fr) repeat(6, minmax(120px, 1fr));
+}
+
+.loan-report-filters input,
+.loan-report-filters select,
+.loan-report-actions button {
+  min-height: 36px;
+}
+
+.loan-report-filters .loan-filter-clear-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+}
+
+.loan-report-metrics {
+  margin-top: 6px;
+  margin-bottom: 12px;
+}
+
+.loan-stage-config-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.loan-stage-config-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto auto auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.loan-stage-config-row .checkbox {
+  margin-bottom: 0;
+}
+
+.loan-stage-config-create-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
+  margin-top: 10px;
+  align-items: center;
+}
+
 .loan-import-options {
   display: flex;
   gap: 8px;
@@ -2776,6 +2849,54 @@ fieldset {
 }
 
 .rubrica-combobox-empty {
+  padding: 9px 10px;
+  color: #5f7898;
+  font-size: 13px;
+}
+
+.quick-agenda-client-combobox {
+  position: relative;
+}
+
+.quick-agenda-client-combobox-list {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 15;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid #c9d9ee;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(15, 52, 94, 0.16);
+  padding: 4px;
+}
+
+.quick-agenda-client-combobox-item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #153b62;
+}
+
+.quick-agenda-client-combobox-item:hover {
+  background: #eff5fd;
+}
+
+.quick-agenda-client-combobox-item small {
+  color: #5f7898;
+  font-weight: 700;
+}
+
+.quick-agenda-client-combobox-empty {
   padding: 9px 10px;
   color: #5f7898;
   font-size: 13px;
@@ -3362,6 +3483,75 @@ fieldset {
   display: grid;
   gap: 8px;
   margin-top: 10px;
+  overflow-x: hidden;
+}
+
+.loan-history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.loan-history-filter-button {
+  border: 1px solid #d2deef;
+  background: #f4f8ff;
+  color: #2c4d70;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.loan-history-filter-button:hover {
+  border-color: #b7cbea;
+  background: #ebf3ff;
+}
+
+.loan-history-filter-button.active {
+  background: #1f5ea8;
+  border-color: #1f5ea8;
+  color: #fff;
+}
+
+.loan-opportunity-history {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.loan-opportunity-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.loan-opportunity-history-card {
+  border: 1px solid #d7e4f6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f9fcff;
+  display: grid;
+  gap: 3px;
+}
+
+.loan-opportunity-history-card p {
+  margin: 0;
+  color: #24364c;
+}
+
+.loan-opportunity-history-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.loan-opportunity-history-head strong {
+  color: #13395f;
+}
+
+.loan-opportunity-history-head span {
+  font-size: 12px;
+  color: #3f6287;
 }
 
 .loan-history article {
@@ -3369,6 +3559,142 @@ fieldset {
   border-radius: 8px;
   padding: 8px 10px;
   background: #f9fcff;
+}
+
+.loan-history-item {
+  border-left-width: 4px;
+  overflow: hidden;
+}
+
+.loan-history-item.timeline-activity {
+  border-left-color: #2f6fed;
+}
+
+.loan-history-item.timeline-status {
+  border-left-color: #0f9d58;
+}
+
+.loan-history-item.timeline-agenda {
+  border-left-color: #8e44ad;
+}
+
+.loan-history-item.timeline-simulation {
+  border-left-color: #ef6c00;
+}
+
+.loan-history-item.timeline-loss {
+  border-left-color: #c62828;
+}
+
+.loan-history-item.timeline-client {
+  border-left-color: #546e7a;
+}
+
+.loan-history-item.timeline-event {
+  border-left-color: #607d8b;
+}
+
+.loan-history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.loan-history-head-single-line {
+  flex-wrap: nowrap;
+  min-width: 0;
+  gap: 6px;
+  margin-bottom: 0;
+}
+
+.loan-history-head strong {
+  color: #13395f;
+}
+
+.loan-history-title-inline {
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 0 1 auto;
+}
+
+.loan-history-description-inline {
+  color: #24364c;
+  font-size: 13px;
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loan-history-meta-inline {
+  color: #5a7390;
+  font-size: 12px;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: auto;
+  flex: 0 1 auto;
+}
+
+.loan-history-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.loan-history-chip.timeline-activity {
+  background: #e9f1ff;
+  color: #2056c9;
+  border-color: #cddcff;
+}
+
+.loan-history-chip.timeline-status {
+  background: #e6f7ef;
+  color: #177245;
+  border-color: #bde8cf;
+}
+
+.loan-history-chip.timeline-agenda {
+  background: #f3e9fb;
+  color: #6d2f91;
+  border-color: #e0c7f1;
+}
+
+.loan-history-chip.timeline-simulation {
+  background: #fff1e1;
+  color: #b25a08;
+  border-color: #ffd4a5;
+}
+
+.loan-history-chip.timeline-loss {
+  background: #fdeaea;
+  color: #9b1f1f;
+  border-color: #f7c0c0;
+}
+
+.loan-history-chip.timeline-client {
+  background: #eef3f6;
+  color: #3d5561;
+  border-color: #d4dee4;
+}
+
+.loan-history-chip.timeline-event {
+  background: #edf2f5;
+  color: #455a64;
+  border-color: #d7e0e5;
 }
 
 .loan-history p {
@@ -3843,6 +4169,14 @@ fieldset {
   color: #8e3333;
 }
 
+.loan-agenda-row-clickable {
+  cursor: pointer;
+}
+
+.loan-agenda-row-clickable:hover {
+  background: #f8fbff;
+}
+
 .loan-agenda-action-button {
   width: 34px;
   height: 34px;
@@ -3915,13 +4249,28 @@ textarea {
   .loan-product-form,
   .loan-filter-row,
   .loan-client-filter-row,
-  .loan-cadastro-filters {
+  .loan-cadastro-filters,
+  .loan-report-filters {
     grid-template-columns: 1fr;
   }
 
   .loan-heat-legend {
     justify-self: start;
     flex-wrap: wrap;
+  }
+
+  .loan-report-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .loan-report-month-filter {
+    min-width: 100%;
+  }
+
+  .loan-stage-config-row,
+  .loan-stage-config-create-row {
+    grid-template-columns: 1fr;
   }
 
   .loan-funil-search-input,
