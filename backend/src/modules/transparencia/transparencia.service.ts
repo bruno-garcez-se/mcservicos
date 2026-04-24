@@ -610,7 +610,35 @@ export async function salvarCliente(
     VALUES (
       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28::jsonb, $29::jsonb, $30
     )
-    ON CONFLICT (name, unidade_gestora, mes, ano) DO NOTHING
+    ON CONFLICT (name, unidade_gestora, mes, ano)
+    DO UPDATE SET
+      source_external_id = EXCLUDED.source_external_id,
+      cargo = EXCLUDED.cargo,
+      lotacao = EXCLUDED.lotacao,
+      valor_liquido = EXCLUDED.valor_liquido,
+      valor_bruto = EXCLUDED.valor_bruto,
+      data_admissao = EXCLUDED.data_admissao,
+      regime = EXCLUDED.regime,
+      vinculo = EXCLUDED.vinculo,
+      margem_maxima = EXCLUDED.margem_maxima,
+      margem_utilizada = EXCLUDED.margem_utilizada,
+      margem_disponivel = EXCLUDED.margem_disponivel,
+      classificacao_margem = EXCLUDED.classificacao_margem,
+      classificacao_consignado = EXCLUDED.classificacao_consignado,
+      score = EXCLUDED.score,
+      classificacao_score = EXCLUDED.classificacao_score,
+      valor_maximo_liberado = EXCLUDED.valor_maximo_liberado,
+      melhor_parcela = EXCLUDED.melhor_parcela,
+      melhor_prazo = EXCLUDED.melhor_prazo,
+      total_pago = EXCLUDED.total_pago,
+      produto_recomendado = EXCLUDED.produto_recomendado,
+      motivo_recomendacao = EXCLUDED.motivo_recomendacao,
+      prioridade_atendimento = EXCLUDED.prioridade_atendimento,
+      score_oportunidade = EXCLUDED.score_oportunidade,
+      raw_list_payload = EXCLUDED.raw_list_payload,
+      raw_detail_payload = EXCLUDED.raw_detail_payload,
+      imported_by = EXCLUDED.imported_by,
+      imported_at = NOW()
     RETURNING id`,
     [
       servant.sourceExternalId,
