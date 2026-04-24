@@ -5126,16 +5126,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             </div>
           </div>
         ) : null}
-        <div className="loan-imported-salary-totals">
-          <article className="loan-imported-salary-total-card">
-            <small>Salário bruto total</small>
-            <strong>{formatCurrency(servidoresSalarioTotais.valorBruto)}</strong>
-          </article>
-          <article className="loan-imported-salary-total-card">
-            <small>Salário líquido total</small>
-            <strong>{formatCurrency(servidoresSalarioTotais.valorLiquido)}</strong>
-          </article>
-        </div>
         <div className="loan-filter-row">
           <input
             placeholder="Buscar por nome"
@@ -5448,6 +5438,14 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                             <div className="detail-item">
                               <strong>Margem utilizada</strong>
                               <span>{formatCurrency(item.margemUtilizada)}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Salário bruto total</strong>
+                              <span>{formatCurrency(servidoresSalarioTotais.valorBruto)}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Salário líquido total</strong>
+                              <span>{formatCurrency(servidoresSalarioTotais.valorLiquido)}</span>
                             </div>
                             <div className="detail-item">
                               <strong>Margem disponivel</strong>
