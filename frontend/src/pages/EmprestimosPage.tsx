@@ -559,6 +559,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   >(defaultSection);
   const [pipelineStages, setPipelineStages] = useState<LoanPipelineStage[]>([]);
   const [isStageConfigOpen, setIsStageConfigOpen] = useState(false);
+  const [isLoanSettingsModalOpen, setIsLoanSettingsModalOpen] = useState(false);
   const [stageConfigItems, setStageConfigItems] = useState<Array<{ key: string; label: string; active: boolean }>>([]);
   const [newStageLabel, setNewStageLabel] = useState("");
   const [isSavingStageConfig, setIsSavingStageConfig] = useState(false);
@@ -2714,6 +2715,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       setConsignadoRate(String(updated.consignadoRate));
       setPessoalRate(String(updated.pessoalRate));
       setMessage("Configurações de margem e taxas atualizadas.");
+      setIsLoanSettingsModalOpen(false);
     } catch {
       setMessage("Falha ao salvar configuração de margem.");
     } finally {
@@ -3371,9 +3373,18 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               <span>Funil de Vendas</span>
             </h3>
             {isAdmin ? (
-              <button type="button" className="loan-filter-clear-button" onClick={onOpenStageConfig}>
-                Configurar colunas
-              </button>
+              <div className="row">
+                <button type="button" className="loan-filter-clear-button" onClick={onOpenStageConfig}>
+                  Configurar colunas
+                </button>
+                <button
+                  type="button"
+                  className="loan-filter-clear-button"
+                  onClick={() => setIsLoanSettingsModalOpen(true)}
+                >
+                  Configurar taxas
+                </button>
+              </div>
             ) : null}
           </div>
           <div className="loan-metrics">
@@ -3398,46 +3409,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               <span>Perdido</span>
             </article>
           </div>
-          {isAdmin ? (
-            <div className="loan-settings-row">
-              <label>
-                Margem consignavel padrao (%)
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  step="0.1"
-                  value={consignableMarginPercent}
-                  onChange={(event) => setConsignableMarginPercent(event.target.value)}
-                />
-              </label>
-              <label>
-                Taxa consignado (% a.m.)
-                <input
-                  type="number"
-                  min={0.1}
-                  max={20}
-                  step="0.1"
-                  value={consignadoRate}
-                  onChange={(event) => setConsignadoRate(event.target.value)}
-                />
-              </label>
-              <label>
-                Taxa pessoal (% a.m.)
-                <input
-                  type="number"
-                  min={0.1}
-                  max={20}
-                  step="0.1"
-                  value={pessoalRate}
-                  onChange={(event) => setPessoalRate(event.target.value)}
-                />
-              </label>
-              <button type="button" onClick={onSaveLoanSettings} disabled={isSavingLoanSettings}>
-                {isSavingLoanSettings ? "Salvando..." : "Salvar configurações"}
-              </button>
-            </div>
-          ) : null}
         </section>
       ) : null}
 
@@ -6614,6 +6585,76 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 {isSavingStageConfig ? "Salvando..." : "Salvar colunas"}
               </button>
             </div>
+          </section>
+        </div>
+      ) : null}
+      {isAdmin && isLoanSettingsModalOpen ? (
+        <div className="modal-backdrop">
+          <section className="card modal-card modal-card-loan-seller" onClick={(event) => event.stopPropagation()}>
+            <div className="section-header-row">
+              <h3>Configurar taxas</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isSavingLoanSettings) setIsLoanSettingsModalOpen(false);
+                }}
+              >
+                X
+              </button>
+            </div>
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onSaveLoanSettings();
+              }}
+            >
+              <label>
+                Margem consignavel padrao (%)
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step="0.1"
+                  value={consignableMarginPercent}
+                  onChange={(event) => setConsignableMarginPercent(event.target.value)}
+                />
+              </label>
+              <label>
+                Taxa consignado (% a.m.)
+                <input
+                  type="number"
+                  min={0.1}
+                  max={20}
+                  step="0.1"
+                  value={consignadoRate}
+                  onChange={(event) => setConsignadoRate(event.target.value)}
+                />
+              </label>
+              <label>
+                Taxa pessoal (% a.m.)
+                <input
+                  type="number"
+                  min={0.1}
+                  max={20}
+                  step="0.1"
+                  value={pessoalRate}
+                  onChange={(event) => setPessoalRate(event.target.value)}
+                />
+              </label>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  onClick={() => setIsLoanSettingsModalOpen(false)}
+                  disabled={isSavingLoanSettings}
+                >
+                  Cancelar
+                </button>
+                <button type="submit" className="primary-button" disabled={isSavingLoanSettings}>
+                  {isSavingLoanSettings ? "Salvando..." : "Salvar configurações"}
+                </button>
+              </div>
+            </form>
           </section>
         </div>
       ) : null}
