@@ -232,6 +232,8 @@ export type ImportedServant = {
   ano: number;
   valorLiquido: number;
   valorBruto: number;
+  salarioBrutoTotalPeriodo?: number;
+  salarioLiquidoTotalPeriodo?: number;
   descontos: number;
   dataAdmissao: string;
   regime: string;

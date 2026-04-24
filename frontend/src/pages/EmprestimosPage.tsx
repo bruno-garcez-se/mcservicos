@@ -768,10 +768,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     errorMessage?: string;
   } | null>(null);
   const [servidoresImportados, setServidoresImportados] = useState<ImportedServant[]>([]);
-  const [servidoresSalarioTotais, setServidoresSalarioTotais] = useState({
-    valorBruto: 0,
-    valorLiquido: 0,
-  });
   const [servidoresExpandidos, setServidoresExpandidos] = useState<number[]>([]);
   const [rubricasDescontoOptions, setRubricasDescontoOptions] = useState<
     Array<{ nome: string; total: number }>
@@ -1762,10 +1758,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     try {
       const data = await listServidoresImportados(servidoresQuery);
       setServidoresImportados(data.items);
-      setServidoresSalarioTotais({
-        valorBruto: Number(data.totals?.valorBruto ?? 0),
-        valorLiquido: Number(data.totals?.valorLiquido ?? 0),
-      });
       setServidoresPaginacao((prev) => ({
         ...prev,
         page: data.page,
@@ -5441,11 +5433,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                             </div>
                             <div className="detail-item">
                               <strong>Salário bruto total</strong>
-                              <span>{formatCurrency(servidoresSalarioTotais.valorBruto)}</span>
+                              <span>{formatCurrency(Number(item.salarioBrutoTotalPeriodo ?? item.valorBruto ?? 0))}</span>
                             </div>
                             <div className="detail-item">
                               <strong>Salário líquido total</strong>
-                              <span>{formatCurrency(servidoresSalarioTotais.valorLiquido)}</span>
+                              <span>{formatCurrency(Number(item.salarioLiquidoTotalPeriodo ?? item.valorLiquido ?? 0))}</span>
                             </div>
                             <div className="detail-item">
                               <strong>Margem disponivel</strong>

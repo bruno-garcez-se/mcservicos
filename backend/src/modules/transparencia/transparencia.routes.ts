@@ -158,6 +158,32 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
       ano,
       valor_liquido AS "valorLiquido",
       valor_bruto AS "valorBruto",
+      (
+        SELECT COALESCE(SUM(s2.valor_bruto), 0)::float8
+        FROM loan_public_servants s2
+        WHERE s2.ano = s.ano
+          AND s2.mes = s.mes
+          AND (
+            (COALESCE(BTRIM(s.source_external_id), '') <> '' AND s2.source_external_id = s.source_external_id)
+            OR (
+              COALESCE(BTRIM(s.source_external_id), '') = ''
+              AND LOWER(BTRIM(s2.name)) = LOWER(BTRIM(s.name))
+            )
+          )
+      ) AS "salarioBrutoTotalPeriodo",
+      (
+        SELECT COALESCE(SUM(s2.valor_liquido), 0)::float8
+        FROM loan_public_servants s2
+        WHERE s2.ano = s.ano
+          AND s2.mes = s.mes
+          AND (
+            (COALESCE(BTRIM(s.source_external_id), '') <> '' AND s2.source_external_id = s.source_external_id)
+            OR (
+              COALESCE(BTRIM(s.source_external_id), '') = ''
+              AND LOWER(BTRIM(s2.name)) = LOWER(BTRIM(s.name))
+            )
+          )
+      ) AS "salarioLiquidoTotalPeriodo",
       (valor_bruto - valor_liquido) AS descontos,
       data_admissao AS "dataAdmissao",
       regime,
@@ -239,7 +265,7 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
         '[]'::jsonb
       ) AS rubricas,
       imported_at AS "importedAt"
-    FROM loan_public_servants
+    FROM loan_public_servants s
     ${whereClause}
     ORDER BY imported_at DESC
     LIMIT $${dataParams.length - 1}
