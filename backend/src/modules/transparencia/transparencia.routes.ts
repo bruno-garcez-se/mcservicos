@@ -133,6 +133,14 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
     ${whereClause}`,
     params,
   );
+  const totalsResult = await pool.query<{ valorBruto: number; valorLiquido: number }>(
+    `SELECT
+      COALESCE(SUM(valor_bruto), 0)::float8 AS "valorBruto",
+      COALESCE(SUM(valor_liquido), 0)::float8 AS "valorLiquido"
+    FROM loan_public_servants
+    ${whereClause}`,
+    params,
+  );
   const total = Number(totalResult.rows[0]?.total ?? "0");
   const totalPages = Math.max(1, Math.ceil(total / query.limit));
   const page = Math.min(query.page, totalPages);
@@ -241,6 +249,10 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
 
   res.json({
     items: result.rows,
+    totals: {
+      valorBruto: Number(totalsResult.rows[0]?.valorBruto ?? 0),
+      valorLiquido: Number(totalsResult.rows[0]?.valorLiquido ?? 0),
+    },
     total,
     page,
     pageSize: query.limit,

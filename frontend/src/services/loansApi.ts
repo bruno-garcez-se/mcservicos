@@ -322,6 +322,10 @@ export async function listServidoresImportados(query?: {
   limit?: number;
 }): Promise<{
   items: ImportedServant[];
+  totals: {
+    valorBruto: number;
+    valorLiquido: number;
+  };
   total: number;
   page: number;
   pageSize: number;
@@ -329,6 +333,10 @@ export async function listServidoresImportados(query?: {
 }> {
   const { data } = await http.get<{
     items: ImportedServant[];
+    totals: {
+      valorBruto: number;
+      valorLiquido: number;
+    };
     total: number;
     page: number;
     pageSize: number;

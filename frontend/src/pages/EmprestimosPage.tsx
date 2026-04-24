@@ -768,6 +768,10 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     errorMessage?: string;
   } | null>(null);
   const [servidoresImportados, setServidoresImportados] = useState<ImportedServant[]>([]);
+  const [servidoresSalarioTotais, setServidoresSalarioTotais] = useState({
+    valorBruto: 0,
+    valorLiquido: 0,
+  });
   const [servidoresExpandidos, setServidoresExpandidos] = useState<number[]>([]);
   const [rubricasDescontoOptions, setRubricasDescontoOptions] = useState<
     Array<{ nome: string; total: number }>
@@ -1758,6 +1762,10 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     try {
       const data = await listServidoresImportados(servidoresQuery);
       setServidoresImportados(data.items);
+      setServidoresSalarioTotais({
+        valorBruto: Number(data.totals?.valorBruto ?? 0),
+        valorLiquido: Number(data.totals?.valorLiquido ?? 0),
+      });
       setServidoresPaginacao((prev) => ({
         ...prev,
         page: data.page,
@@ -5118,6 +5126,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             </div>
           </div>
         ) : null}
+        <div className="loan-imported-salary-totals">
+          <article className="loan-imported-salary-total-card">
+            <small>Salário bruto total</small>
+            <strong>{formatCurrency(servidoresSalarioTotais.valorBruto)}</strong>
+          </article>
+          <article className="loan-imported-salary-total-card">
+            <small>Salário líquido total</small>
+            <strong>{formatCurrency(servidoresSalarioTotais.valorLiquido)}</strong>
+          </article>
+        </div>
         <div className="loan-filter-row">
           <input
             placeholder="Buscar por nome"
