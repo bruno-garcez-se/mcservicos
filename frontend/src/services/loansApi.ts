@@ -109,6 +109,11 @@ export async function listLoanSellers(): Promise<Array<{ id: number; name: strin
   return data;
 }
 
+export async function listLoanConvenios(): Promise<string[]> {
+  const { data } = await http.get<string[]>("/loans/convenios");
+  return data;
+}
+
 export async function listLoanInteractions(clientId: number): Promise<LoanInteraction[]> {
   const { data } = await http.get<LoanInteraction[]>(`/loans/clients/${clientId}/interactions`);
   return data;

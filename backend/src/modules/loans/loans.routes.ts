@@ -1009,6 +1009,20 @@ loansRouter.get("/sellers", requireAuth, async (_req, res) => {
   res.json(result.rows);
 });
 
+loansRouter.get("/convenios", requireAuth, async (_req, res) => {
+  await ensureLoanClientStructures();
+  const result = await pool.query<{ convenio: string }>(
+    `SELECT DISTINCT c.convenio AS convenio
+     FROM loan_clients c
+     WHERE c.deleted_at IS NULL
+       AND c.convenio IS NOT NULL
+       AND BTRIM(c.convenio) <> ''
+     ORDER BY LOWER(c.convenio) ASC
+     LIMIT 1000`,
+  );
+  res.json(result.rows.map((row) => row.convenio));
+});
+
 loansRouter.get("/agenda", requireAuth, async (req, res) => {
   await ensureLoanClientStructures();
   const query = z

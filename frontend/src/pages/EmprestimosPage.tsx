@@ -24,6 +24,7 @@ import {
   importarServidoresPortal,
   importLoanLeads,
   listLoanAgenda,
+  listLoanConvenios,
   listServidoresImportados,
   listRubricasDescontoServidores,
   listLoanSellers,
@@ -741,6 +742,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       return [];
     }
   });
+  const [convenioCatalog, setConvenioCatalog] = useState<string[]>([]);
   const [servidoresForm, setServidoresForm] = useState({
     nome: "",
     ano: new Date().getFullYear(),
@@ -1353,6 +1355,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       seen.add(normalized);
       ordered.push(normalized);
     };
+    for (const convenio of convenioCatalog) pushOption(convenio);
     for (const convenio of savedConvenios) pushOption(convenio);
     pushOption("INSS");
     for (const item of clients) {
@@ -1363,7 +1366,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     }
     pushOption(clientForm.convenio);
     return ordered;
-  }, [savedConvenios, clients, cadastroClientes, clientForm.convenio]);
+  }, [convenioCatalog, savedConvenios, clients, cadastroClientes, clientForm.convenio]);
 
   async function loadMainData(options?: { silent?: boolean }): Promise<void> {
     const silent = options?.silent ?? true;
@@ -1426,6 +1429,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       }
     } catch {
       setMessage("Falha ao carregar vendedores.");
+    }
+  }
+
+  async function loadConvenioCatalog(): Promise<void> {
+    try {
+      const data = await listLoanConvenios();
+      setConvenioCatalog(data);
+    } catch {
+      // Mantém os convênios locais já conhecidos se a API falhar.
+      setConvenioCatalog([]);
     }
   }
 
@@ -1785,6 +1798,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     void loadMainData({ silent: false });
     void loadRubricasDescontoOptions();
     void loadSellerOptions();
+    void loadConvenioCatalog();
     void loadPipelineStagesData();
     if (isAdmin) {
       void loadLoanSettings();
