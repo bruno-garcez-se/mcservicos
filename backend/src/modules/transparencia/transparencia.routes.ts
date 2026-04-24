@@ -202,6 +202,8 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
       produto_recomendado AS "produtoRecomendado",
       motivo_recomendacao AS "motivoRecomendacao",
       prioridade_atendimento AS "prioridadeAtendimento",
+      raw_list_payload AS "rawListPayload",
+      raw_detail_payload AS "rawDetailPayload",
       COALESCE(
         (
           SELECT jsonb_agg(

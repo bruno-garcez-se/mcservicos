@@ -2362,6 +2362,24 @@ fieldset {
   grid-column: span 2;
 }
 
+.detail-item-raw {
+  grid-column: 1 / -1;
+}
+
+.raw-json-block {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #d9e7f8;
+  border-radius: 8px;
+  background: #f7fbff;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .rubricas-list {
   display: grid;
   gap: 4px;

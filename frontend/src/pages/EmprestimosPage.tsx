@@ -229,6 +229,15 @@ function getChannelLabel(channel: string): string {
   return INTERACTION_CHANNEL_OPTIONS.find((item) => item.value === normalized)?.label ?? channel;
 }
 
+function formatRawJson(payload: unknown): string {
+  if (payload === null || payload === undefined) return "-";
+  try {
+    return JSON.stringify(payload, null, 2);
+  } catch {
+    return String(payload);
+  }
+}
+
 function extractApiMessage(error: unknown, fallback: string): string {
   if (
     typeof error === "object" &&
@@ -5420,8 +5429,28 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                               <span>{item.lotacao || "-"}</span>
                             </div>
                             <div className="detail-item">
+                              <strong>Cargo</strong>
+                              <span>{item.cargo || "-"}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Unidade gestora</strong>
+                              <span>{item.unidadeGestora || "-"}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>ID externo (vínculo)</strong>
+                              <span>{item.sourceExternalId || "-"}</span>
+                            </div>
+                            <div className="detail-item">
                               <strong>Admissao</strong>
                               <span>{item.dataAdmissao || "-"}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Valor bruto (registro)</strong>
+                              <span>{formatCurrency(Number(item.valorBruto ?? 0))}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Valor líquido (registro)</strong>
+                              <span>{formatCurrency(Number(item.valorLiquido ?? 0))}</span>
                             </div>
                             <div className="detail-item">
                               <strong>Margem maxima</strong>
@@ -5475,6 +5504,14 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                               ) : (
                                 <span>-</span>
                               )}
+                            </div>
+                            <div className="detail-item detail-item-raw">
+                              <strong>Payload bruto (lista)</strong>
+                              <pre className="raw-json-block">{formatRawJson(item.rawListPayload)}</pre>
+                            </div>
+                            <div className="detail-item detail-item-raw">
+                              <strong>Payload bruto (detalhe)</strong>
+                              <pre className="raw-json-block">{formatRawJson(item.rawDetailPayload)}</pre>
                             </div>
                           </div>
                         </td>

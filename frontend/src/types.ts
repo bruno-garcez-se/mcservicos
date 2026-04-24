@@ -252,6 +252,8 @@ export type ImportedServant = {
   motivoRecomendacao: string;
   prioridadeAtendimento: "Alta" | "Media" | "Baixa";
   classificacaoConsignado: "Com consignado" | "Sem consignado";
+  rawListPayload?: unknown;
+  rawDetailPayload?: unknown;
   rubricas: Array<{
     nome: string;
     valor: number;
