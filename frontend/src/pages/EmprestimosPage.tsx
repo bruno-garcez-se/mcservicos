@@ -2723,10 +2723,10 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     }
   };
 
-  const scoreBadge = (classificacaoScore: ImportedServant["classificacaoScore"]): string => {
-    if (classificacaoScore === "Quente") return "🔥 Quente";
-    if (classificacaoScore === "Morno") return "🟡 Morno";
-    return "❄ Frio";
+  const getImportedScoreHeatClassName = (classificacaoScore: ImportedServant["classificacaoScore"]): string => {
+    if (classificacaoScore === "Quente") return "loan-heat-quente";
+    if (classificacaoScore === "Morno") return "loan-heat-morno";
+    return "loan-heat-frio";
   };
 
   const prioridadeBadge = (prioridade: ImportedServant["prioridadeAtendimento"]): string => {
@@ -3757,21 +3757,21 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
           >
             Limpar
           </button>
-          <div className="loan-heat-legend" aria-label="Legenda de temperatura dos clientes">
-            <span className="loan-heat-legend-title">Status:</span>
-            <span className="loan-heat-legend-item">
-              <span className="loan-heat-circle loan-heat-frio" />
-              <small>Frio</small>
-            </span>
-            <span className="loan-heat-legend-item">
-              <span className="loan-heat-circle loan-heat-morno" />
-              <small>Morno</small>
-            </span>
-            <span className="loan-heat-legend-item">
-              <span className="loan-heat-circle loan-heat-quente" />
-              <small>Quente</small>
-            </span>
-          </div>
+        </div>
+        <div className="loan-heat-legend loan-heat-legend-funil" aria-label="Legenda de temperatura dos clientes">
+          <span className="loan-heat-legend-title">Status:</span>
+          <span className="loan-heat-legend-item">
+            <span className="loan-heat-circle loan-heat-frio" />
+            <small>Frio</small>
+          </span>
+          <span className="loan-heat-legend-item">
+            <span className="loan-heat-circle loan-heat-morno" />
+            <small>Morno</small>
+          </span>
+          <span className="loan-heat-legend-item">
+            <span className="loan-heat-circle loan-heat-quente" />
+            <small>Quente</small>
+          </span>
         </div>
         <div
           className="loan-kanban-scroll"
@@ -5237,9 +5237,9 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             }}
           >
             <option value="">Todo score</option>
-            <option value="Quente">🔥 Quente</option>
-            <option value="Morno">🟡 Morno</option>
-            <option value="Frio">❄ Frio</option>
+            <option value="Quente">Quente</option>
+            <option value="Morno">Morno</option>
+            <option value="Frio">Frio</option>
           </select>
           <select
             value={servidoresFiltro.prioridadeAtendimento}
@@ -5355,8 +5355,14 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                           <div className="details-grid">
                             <div className="detail-item">
                               <strong>Score e prioridade</strong>
-                              <span>
-                                {item.score} - {scoreBadge(item.classificacaoScore)} - {prioridadeBadge(item.prioridadeAtendimento)}
+                              <span className="score-prioridade-inline">
+                                <span>{item.score}</span>
+                                <span
+                                  className={`loan-heat-badge-chip ${getImportedScoreHeatClassName(item.classificacaoScore)}`}
+                                >
+                                  {item.classificacaoScore}
+                                </span>
+                                <span>{prioridadeBadge(item.prioridadeAtendimento)}</span>
                               </span>
                             </div>
                             <div className="detail-item">
