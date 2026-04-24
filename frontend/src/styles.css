@@ -2915,7 +2915,7 @@ fieldset {
   margin: 10px 0 12px;
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(180px, 32%) 170px 170px 180px auto auto;
+  grid-template-columns: minmax(180px, 28%) 150px 150px 160px 160px 160px auto;
 }
 
 .loan-settings-row {

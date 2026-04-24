@@ -1127,6 +1127,7 @@ loansRouter.get("/clients", requireAuth, async (req, res) => {
       monthRef: z.string().regex(/^\d{4}-\d{2}$/).optional(),
       status: z.string().trim().min(1).optional(),
       source: z.string().trim().optional(),
+      convenio: z.string().trim().optional(),
       assignedUserId: z.coerce.number().int().positive().optional(),
       sortBy: z
         .enum(["name", "cpf", "city", "profession", "convenio", "assignedUserName", "status", "updatedAt"])
@@ -1157,6 +1158,10 @@ loansRouter.get("/clients", requireAuth, async (req, res) => {
   if (query.source) {
     params.push(query.source);
     scope += ` AND c.source = $${params.length}`;
+  }
+  if (query.convenio) {
+    params.push(query.convenio);
+    scope += ` AND c.convenio = $${params.length}`;
   }
   if (query.assignedUserId) {
     params.push(query.assignedUserId);

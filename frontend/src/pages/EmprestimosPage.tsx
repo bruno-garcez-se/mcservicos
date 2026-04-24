@@ -901,11 +901,12 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const [clientesFiltro, setClientesFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(KANBAN_FILTERS_STORAGE_KEY);
-      if (!raw) return { busca: "", status: "", source: "", vendedorId: defaultSellerFilter, monthRef: "" };
+      if (!raw) return { busca: "", status: "", source: "", convenio: "", vendedorId: defaultSellerFilter, monthRef: "" };
       const parsed = JSON.parse(raw) as {
         busca?: string;
         status?: string;
         source?: string;
+        convenio?: string;
         vendedorId?: string;
         monthRef?: string;
       };
@@ -918,11 +919,12 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         busca: typeof parsed.busca === "string" ? parsed.busca : "",
         status: typeof parsed.status === "string" ? parsed.status : "",
         source: typeof parsed.source === "string" ? parsed.source : "",
+        convenio: typeof parsed.convenio === "string" ? parsed.convenio : "",
         vendedorId,
         monthRef: typeof parsed.monthRef === "string" ? parsed.monthRef : "",
       };
     } catch {
-      return { busca: "", status: "", source: "", vendedorId: defaultSellerFilter, monthRef: "" };
+      return { busca: "", status: "", source: "", convenio: "", vendedorId: defaultSellerFilter, monthRef: "" };
     }
   });
   const [relatoriosFiltro, setRelatoriosFiltro] = useState<{
@@ -1060,6 +1062,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         monthRef: /^\d{4}-\d{2}$/.test(clientesFiltro.monthRef) ? clientesFiltro.monthRef : undefined,
         status: statusNormalizado,
         source: clientesFiltro.source.trim() || undefined,
+        convenio: clientesFiltro.convenio.trim() || undefined,
         assignedUserId: Number(clientesFiltro.vendedorId) || undefined,
         page: clientesPaginacao.page,
         limit: clientesPaginacao.pageSize,
@@ -1071,6 +1074,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       clientesFiltro.monthRef,
       clientesFiltro.status,
       clientesFiltro.source,
+      clientesFiltro.convenio,
       clientesFiltro.vendedorId,
       clientesPaginacao.page,
       clientesPaginacao.pageSize,
@@ -1831,6 +1835,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
           monthRef: clientesFiltro.monthRef,
           status: clientesFiltro.status,
           source: clientesFiltro.source,
+          convenio: clientesFiltro.convenio,
           vendedorId: clientesFiltro.vendedorId,
           pageSize: clientesPaginacao.pageSize,
         }),
@@ -1843,6 +1848,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     clientesFiltro.monthRef,
     clientesFiltro.status,
     clientesFiltro.source,
+    clientesFiltro.convenio,
     clientesFiltro.vendedorId,
     clientesPaginacao.pageSize,
   ]);
@@ -3734,6 +3740,20 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             ))}
           </select>
           <select
+            value={clientesFiltro.convenio}
+            onChange={(event) => {
+              setClientesFiltro((prev) => ({ ...prev, convenio: event.target.value }));
+              setClientesPaginacao((prev) => ({ ...prev, page: 1 }));
+            }}
+          >
+            <option value="">Todos os convênios</option>
+            {convenioOptions.map((convenio) => (
+              <option key={`funil-convenio-${convenio}`} value={convenio}>
+                {convenio}
+              </option>
+            ))}
+          </select>
+          <select
             className="loan-funil-month-select"
             value={clientesFiltro.monthRef}
             onChange={(event) => {
@@ -3751,7 +3771,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             className="loan-filter-clear-button loan-funil-clear-button"
             type="button"
             onClick={() => {
-              setClientesFiltro({ busca: "", status: "", source: "", vendedorId: "", monthRef: "" });
+              setClientesFiltro({ busca: "", status: "", source: "", convenio: "", vendedorId: "", monthRef: "" });
               setClientesPaginacao((prev) => ({ ...prev, page: 1 }));
             }}
           >

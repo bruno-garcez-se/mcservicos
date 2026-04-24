@@ -20,6 +20,7 @@ export async function listLoanClients(query?: {
   monthRef?: string;
   status?: LoanClientStatus;
   source?: string;
+  convenio?: string;
   assignedUserId?: number;
   sortBy?: "name" | "cpf" | "city" | "profession" | "convenio" | "assignedUserName" | "status" | "updatedAt";
   sortDir?: "asc" | "desc";
