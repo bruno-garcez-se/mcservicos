@@ -238,6 +238,57 @@ function formatRawJson(payload: unknown): string {
   }
 }
 
+type RawFieldItem = {
+  path: string;
+  value: string;
+};
+
+function formatRawFieldValue(value: unknown): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return value.trim() ? value : "(vazio)";
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function collectRawFields(payload: unknown, basePath = ""): RawFieldItem[] {
+  if (Array.isArray(payload)) {
+    if (payload.length === 0) {
+      return [{ path: basePath || "(raiz)", value: "[]" }];
+    }
+    return payload.flatMap((item, index) =>
+      collectRawFields(item, basePath ? `${basePath}[${index}]` : `[${index}]`),
+    );
+  }
+  if (payload && typeof payload === "object") {
+    const entries = Object.entries(payload as Record<string, unknown>);
+    if (entries.length === 0) {
+      return [{ path: basePath || "(raiz)", value: "{}" }];
+    }
+    return entries.flatMap(([key, value]) =>
+      collectRawFields(value, basePath ? `${basePath}.${key}` : key),
+    );
+  }
+  return [{ path: basePath || "(raiz)", value: formatRawFieldValue(payload) }];
+}
+
+function sortRawFields(fields: RawFieldItem[]): RawFieldItem[] {
+  return [...fields].sort((a, b) => a.path.localeCompare(b.path, "pt-BR", { sensitivity: "base" }));
+}
+
+function filterRawFields(fields: RawFieldItem[], query: string): RawFieldItem[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return fields;
+  return fields.filter(
+    (field) =>
+      field.path.toLowerCase().includes(normalizedQuery) || field.value.toLowerCase().includes(normalizedQuery),
+  );
+}
+
 function extractApiMessage(error: unknown, fallback: string): string {
   if (
     typeof error === "object" &&
@@ -778,6 +829,9 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   } | null>(null);
   const [servidoresImportados, setServidoresImportados] = useState<ImportedServant[]>([]);
   const [servidoresExpandidos, setServidoresExpandidos] = useState<number[]>([]);
+  const [rawFieldsSearch, setRawFieldsSearch] = useState<
+    Record<number, { lista: string; detalhe: string }>
+  >({});
   const [rubricasDescontoOptions, setRubricasDescontoOptions] = useState<
     Array<{ nome: string; total: number }>
   >([]);
@@ -5357,6 +5411,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             ) : (
               servidoresImportados.map((item) => {
                 const expandido = servidoresExpandidos.includes(item.id);
+                const itemRawSearch = rawFieldsSearch[item.id] ?? { lista: "", detalhe: "" };
+                const rawListFields = sortRawFields(collectRawFields(item.rawListPayload));
+                const rawDetailFields = sortRawFields(collectRawFields(item.rawDetailPayload));
+                const filteredRawListFields = filterRawFields(rawListFields, itemRawSearch.lista);
+                const filteredRawDetailFields = filterRawFields(rawDetailFields, itemRawSearch.detalhe);
                 return (
                   <Fragment key={item.id}>
                     <tr>
@@ -5512,6 +5571,66 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                             <div className="detail-item detail-item-raw">
                               <strong>Payload bruto (detalhe)</strong>
                               <pre className="raw-json-block">{formatRawJson(item.rawDetailPayload)}</pre>
+                            </div>
+                            <div className="detail-item detail-item-raw">
+                              <strong>Todos os campos (lista)</strong>
+                              <input
+                                type="text"
+                                className="raw-fields-search-input"
+                                placeholder="Buscar campo/valor no payload de lista..."
+                                value={itemRawSearch.lista}
+                                onChange={(event) =>
+                                  setRawFieldsSearch((current) => ({
+                                    ...current,
+                                    [item.id]: {
+                                      lista: event.target.value,
+                                      detalhe: current[item.id]?.detalhe ?? "",
+                                    },
+                                  }))
+                                }
+                              />
+                              <div className="raw-fields-list">
+                                {filteredRawListFields.length === 0 ? (
+                                  <div className="raw-fields-empty">Nenhum campo encontrado para este filtro.</div>
+                                ) : (
+                                  filteredRawListFields.map((field) => (
+                                  <div className="raw-field-row" key={`raw-list-${item.id}-${field.path}`}>
+                                    <code className="raw-field-path">{field.path}</code>
+                                    <span className="raw-field-value">{field.value}</span>
+                                  </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                            <div className="detail-item detail-item-raw">
+                              <strong>Todos os campos (detalhe)</strong>
+                              <input
+                                type="text"
+                                className="raw-fields-search-input"
+                                placeholder="Buscar campo/valor no payload de detalhe..."
+                                value={itemRawSearch.detalhe}
+                                onChange={(event) =>
+                                  setRawFieldsSearch((current) => ({
+                                    ...current,
+                                    [item.id]: {
+                                      lista: current[item.id]?.lista ?? "",
+                                      detalhe: event.target.value,
+                                    },
+                                  }))
+                                }
+                              />
+                              <div className="raw-fields-list">
+                                {filteredRawDetailFields.length === 0 ? (
+                                  <div className="raw-fields-empty">Nenhum campo encontrado para este filtro.</div>
+                                ) : (
+                                  filteredRawDetailFields.map((field) => (
+                                  <div className="raw-field-row" key={`raw-detail-${item.id}-${field.path}`}>
+                                    <code className="raw-field-path">{field.path}</code>
+                                    <span className="raw-field-value">{field.value}</span>
+                                  </div>
+                                  ))
+                                )}
+                              </div>
                             </div>
                           </div>
                         </td>

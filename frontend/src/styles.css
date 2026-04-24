@@ -2380,6 +2380,49 @@ fieldset {
   word-break: break-word;
 }
 
+.raw-fields-list {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid #d9e7f8;
+  border-radius: 8px;
+  background: #f7fbff;
+}
+
+.raw-fields-search-input {
+  margin: 6px 0 8px;
+}
+
+.raw-fields-empty {
+  padding: 10px;
+  color: #5f7898;
+  font-size: 12px;
+}
+
+.raw-field-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) 1fr;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid #e5eef9;
+}
+
+.raw-field-row:last-child {
+  border-bottom: none;
+}
+
+.raw-field-path {
+  font-size: 11px;
+  color: #18466f;
+  word-break: break-word;
+}
+
+.raw-field-value {
+  font-size: 12px;
+  color: #294a6b;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .rubricas-list {
   display: grid;
   gap: 4px;
