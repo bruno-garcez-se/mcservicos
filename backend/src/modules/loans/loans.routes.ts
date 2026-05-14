@@ -37,7 +37,13 @@ const clientSchema = z.object({
   name: z.string().trim().min(2),
   cpf: z.string().trim().min(11),
   phones: z.array(z.string().trim().min(8)).min(1),
+  cep: z.string().trim().default(""),
+  addressStreet: z.string().trim().default(""),
+  addressNumber: z.string().trim().default(""),
+  addressComplement: z.string().trim().default(""),
+  addressNeighborhood: z.string().trim().default(""),
   city: z.string().trim().default(""),
+  addressState: z.string().trim().default(""),
   profession: z.string().trim().default(""),
   convenio: z.string().trim().default(""),
   income: z.coerce.number().min(0).default(0),
@@ -414,6 +420,50 @@ async function ensureLoanOpportunityStructures(): Promise<void> {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_loan_opportunities_closed_at ON loan_opportunities(closed_at)`,
   );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_manual_margin NUMERIC(14,2)`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_contract_value NUMERIC(14,2)`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_net_value NUMERIC(14,2)`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_term_months INT`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_interest_rate NUMERIC(10,6)`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_agency TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_contract_type TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_pdv TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_status TEXT NOT NULL DEFAULT 'pendente'`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_notes TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_opportunities
+     ADD COLUMN IF NOT EXISTS commission_updated_at TIMESTAMPTZ`,
+  );
 }
 
 async function ensureBackfilledLoanOpportunities(): Promise<void> {
@@ -519,6 +569,8 @@ async function syncOpportunityForStatusChange(params: {
   const stages = await getPipelineStages();
   const previousOutcome = outcomeFromStatus(params.previousStatus, stages);
   const nextOutcome = outcomeFromStatus(params.nextStatus, stages);
+  const assignedUserIdForOpportunity =
+    params.nextStatus === "ganho" && params.actorUserId ? params.actorUserId : params.assignedUserId;
   const previousIsTerminal = previousOutcome !== null;
   const nextIsTerminal = nextOutcome !== null;
   const movingToNewCycle = previousIsTerminal && !nextIsTerminal;
@@ -527,7 +579,7 @@ async function syncOpportunityForStatusChange(params: {
       clientId: params.clientId,
       status: params.nextStatus,
       source: params.source,
-      assignedUserId: params.assignedUserId,
+      assignedUserId: assignedUserIdForOpportunity,
       actorUserId: params.actorUserId,
     });
     return;
@@ -543,12 +595,35 @@ async function syncOpportunityForStatusChange(params: {
     [params.clientId],
   );
 
-  if (!openOpportunity.rows[0]) {
+  if (!openOpportunity.rows[0] && !(previousIsTerminal && nextIsTerminal)) {
     await appendLoanOpportunityCycle({
       clientId: params.clientId,
       status: params.nextStatus,
       source: params.source,
-      assignedUserId: params.assignedUserId,
+      assignedUserId: assignedUserIdForOpportunity,
+      actorUserId: params.actorUserId,
+    });
+    return;
+  }
+
+  let targetOpportunityId = openOpportunity.rows[0]?.id ?? null;
+  if (!targetOpportunityId && previousIsTerminal && nextIsTerminal) {
+    const latestOpportunity = await pool.query<{ id: number }>(
+      `SELECT id
+       FROM loan_opportunities
+       WHERE client_id = $1
+       ORDER BY cycle_number DESC, id DESC
+       LIMIT 1`,
+      [params.clientId],
+    );
+    targetOpportunityId = latestOpportunity.rows[0]?.id ?? null;
+  }
+  if (!targetOpportunityId) {
+    await appendLoanOpportunityCycle({
+      clientId: params.clientId,
+      status: params.nextStatus,
+      source: params.source,
+      assignedUserId: assignedUserIdForOpportunity,
       actorUserId: params.actorUserId,
     });
     return;
@@ -572,10 +647,10 @@ async function syncOpportunityForStatusChange(params: {
       updated_at = NOW()
      WHERE id = $1`,
     [
-      openOpportunity.rows[0].id,
+      targetOpportunityId,
       params.nextStatus,
       params.source,
-      params.assignedUserId,
+      assignedUserIdForOpportunity,
       nextIsTerminal,
       nextOutcome,
       lossSnapshot?.reason ?? null,
@@ -591,6 +666,30 @@ async function ensureLoanClientStructures(): Promise<void> {
   await pool.query(
     `ALTER TABLE loan_clients
      ADD COLUMN IF NOT EXISTS profession TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_clients
+     ADD COLUMN IF NOT EXISTS cep TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_clients
+     ADD COLUMN IF NOT EXISTS address_street TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_clients
+     ADD COLUMN IF NOT EXISTS address_number TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_clients
+     ADD COLUMN IF NOT EXISTS address_complement TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_clients
+     ADD COLUMN IF NOT EXISTS address_neighborhood TEXT NOT NULL DEFAULT ''`,
+  );
+  await pool.query(
+    `ALTER TABLE loan_clients
+     ADD COLUMN IF NOT EXISTS address_state TEXT NOT NULL DEFAULT ''`,
   );
   await pool.query(
     `ALTER TABLE loan_clients
@@ -827,6 +926,7 @@ loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
   }
 
   const result = await pool.query<{
+    opportunityId: number;
     id: number;
     name: string;
     cpf: string;
@@ -836,14 +936,28 @@ loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
     income: string;
     source: string;
     status: "ganho" | "perdido";
+    currentClientStatus: string;
+    assignedUserId: number | null;
     assignedUserName: string | null;
     updatedAt: string;
     lastLossInteractionAt: string | null;
     lostReason: string | null;
     lostHasMargin: boolean | null;
+    commissionManualMargin: string | null;
+    commissionContractValue: string | null;
+    commissionNetValue: string | null;
+    commissionTermMonths: number | null;
+    commissionInterestRate: string | null;
+    commissionAgency: string;
+    commissionContractType: string;
+    commissionPdv: string;
+    commissionStatus: string;
+    commissionNotes: string;
+    commissionUpdatedAt: string | null;
     phones: string[];
   }>(
     `SELECT
+      o.id AS "opportunityId",
       c.id,
       c.name,
       c.cpf,
@@ -853,15 +967,65 @@ loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
       c.income::text AS income,
       c.source,
       o.outcome AS status,
-      u.name AS "assignedUserName",
+      c.status AS "currentClientStatus",
+      CASE
+        WHEN o.outcome = 'ganho' THEN
+          CASE
+            WHEN seller_override.has_override THEN o.assigned_user_id
+            ELSE COALESCE(ganho_actor.actor_user_id, o.assigned_user_id)
+          END
+        ELSE o.assigned_user_id
+      END AS "assignedUserId",
+      CASE
+        WHEN o.outcome = 'ganho' THEN
+          CASE
+            WHEN seller_override.has_override THEN u.name
+            ELSE COALESCE(ganho_actor.actor_name, u.name)
+          END
+        ELSE u.name
+      END AS "assignedUserName",
       COALESCE(o.closed_at, o.updated_at) AS "updatedAt",
       o.closed_at AS "lastLossInteractionAt",
       o.loss_reason AS "lostReason",
       o.loss_has_margin AS "lostHasMargin",
+      o.commission_manual_margin::text AS "commissionManualMargin",
+      o.commission_contract_value::text AS "commissionContractValue",
+      o.commission_net_value::text AS "commissionNetValue",
+      o.commission_term_months AS "commissionTermMonths",
+      o.commission_interest_rate::text AS "commissionInterestRate",
+      o.commission_agency AS "commissionAgency",
+      o.commission_contract_type AS "commissionContractType",
+      o.commission_pdv AS "commissionPdv",
+      o.commission_status AS "commissionStatus",
+      o.commission_notes AS "commissionNotes",
+      o.commission_updated_at AS "commissionUpdatedAt",
       COALESCE(phones.phones, ARRAY[]::text[]) AS phones
     FROM loan_opportunities o
     JOIN loan_clients c ON c.id = o.client_id
     LEFT JOIN users u ON u.id = o.assigned_user_id
+    LEFT JOIN LATERAL (
+      SELECT
+        a.actor_user_id,
+        au.name AS actor_name
+      FROM audit_logs a
+      LEFT JOIN users au ON au.id = a.actor_user_id
+      WHERE a.target_type = 'loan_client'
+        AND a.target_id = c.id
+        AND a.action = 'loan.client.status'
+        AND LOWER(COALESCE(a.details->>'status', '')) = 'ganho'
+      ORDER BY a.created_at DESC
+      LIMIT 1
+    ) ganho_actor ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT EXISTS (
+        SELECT 1
+        FROM audit_logs a
+        WHERE a.target_type = 'loan_opportunity'
+          AND a.target_id = o.id
+          AND a.action = 'loan.opportunity.commission.update'
+          AND (a.details->'fields') ? 'assignedUserId'
+      ) AS has_override
+    ) seller_override ON TRUE
     LEFT JOIN LATERAL (
       SELECT ARRAY_AGG(p.phone ORDER BY p.id) AS phones
       FROM loan_client_phones p
@@ -878,6 +1042,7 @@ loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
         ? parseLossNote(null)
         : { reason: row.lostReason, hasMargin: row.lostHasMargin };
     return {
+      opportunityId: row.opportunityId,
       id: row.id,
       name: row.name,
       cpf: formatCpf(String(row.cpf ?? "")),
@@ -888,11 +1053,29 @@ loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
       income: Number(row.income ?? 0),
       source: row.source ?? "",
       status: row.status,
+      currentClientStatus: row.currentClientStatus ?? "",
+      assignedUserId: row.assignedUserId ?? null,
       assignedUserName: row.assignedUserName ?? null,
       updatedAt: row.updatedAt,
       lastLossInteractionAt: row.lastLossInteractionAt,
       lostReason: row.status === "perdido" ? fallbackLoss.reason : null,
       lostHasMargin: row.status === "perdido" ? fallbackLoss.hasMargin : null,
+      commissionManualMargin: row.commissionManualMargin === null ? null : Number(row.commissionManualMargin),
+      commissionContractValue: row.commissionContractValue === null ? null : Number(row.commissionContractValue),
+      commissionNetValue: row.commissionNetValue === null ? null : Number(row.commissionNetValue),
+      commissionTermMonths: row.commissionTermMonths ?? null,
+      commissionInterestRate: row.commissionInterestRate === null ? null : Number(row.commissionInterestRate),
+      commissionAgency: row.commissionAgency ?? "",
+      commissionContractType: row.commissionContractType ?? "",
+      commissionPdv: row.commissionPdv ?? "",
+      commissionStatus:
+        String(row.commissionStatus ?? "")
+          .trim()
+          .toLowerCase() === "pago"
+          ? "pago"
+          : "pendente",
+      commissionNotes: row.commissionNotes ?? "",
+      commissionUpdatedAt: row.commissionUpdatedAt,
     };
   });
 
@@ -909,6 +1092,117 @@ loansRouter.get("/reports/funnel-outcomes", requireAuth, async (req, res) => {
     },
     items,
   });
+});
+
+loansRouter.patch("/opportunities/:id/commission-data", requireAuth, async (req, res) => {
+  await ensureLoanClientStructures();
+  const user = req.user!;
+  const params = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
+  const payload = z
+    .object({
+      manualMargin: z.coerce.number().min(0).nullable().optional(),
+      contractValue: z.coerce.number().min(0).nullable().optional(),
+      netValue: z.coerce.number().min(0).nullable().optional(),
+      termMonths: z.coerce.number().int().min(1).max(240).nullable().optional(),
+      interestRate: z.coerce.number().min(0).max(100).nullable().optional(),
+      agency: z.string().trim().max(80).optional(),
+      contractType: z.string().trim().max(120).optional(),
+      pdv: z.string().trim().max(80).optional(),
+      assignedUserId: z.coerce.number().int().positive().nullable().optional(),
+      commissionStatus: z.enum(["pendente", "pago"]).optional(),
+      notes: z.string().trim().max(400).optional(),
+    })
+    .refine((value) => Object.keys(value).length > 0, {
+      message: "Informe ao menos um campo para atualizar.",
+    })
+    .parse(req.body);
+
+  const existing = await pool.query<{
+    id: number;
+    clientId: number;
+    assignedUserId: number | null;
+    outcome: "ganho" | "perdido" | null;
+  }>(
+    `SELECT
+      o.id,
+      o.client_id AS "clientId",
+      o.assigned_user_id AS "assignedUserId",
+      o.outcome
+     FROM loan_opportunities o
+     WHERE o.id = $1
+     LIMIT 1`,
+    [params.id],
+  );
+  const target = existing.rows[0];
+  if (!target) {
+    res.status(404).json({ message: "Oportunidade nao encontrada." });
+    return;
+  }
+  if (target.outcome !== "ganho") {
+    res.status(400).json({ message: "Comissão manual só pode ser editada para cards ganhos." });
+    return;
+  }
+  if (user.role !== "admin" && Number(target.assignedUserId ?? 0) !== user.id) {
+    res.status(403).json({ message: "Sem permissao para editar comissão deste card." });
+    return;
+  }
+  if (payload.assignedUserId !== undefined && user.role !== "admin") {
+    res.status(403).json({ message: "Somente administrador pode alterar o vendedor(a)." });
+    return;
+  }
+  if (payload.assignedUserId !== undefined && payload.assignedUserId !== null) {
+    const assignedExists = await pool.query(
+      `SELECT id FROM users WHERE id = $1 AND active = true LIMIT 1`,
+      [payload.assignedUserId],
+    );
+    if (!assignedExists.rows[0]) {
+      res.status(400).json({ message: "Vendedor(a) inválido(a)." });
+      return;
+    }
+  }
+
+  const updates: string[] = [];
+  const values: Array<string | number | null> = [];
+  const pushUpdate = (fragment: string, value: string | number | null) => {
+    values.push(value);
+    updates.push(`${fragment} = $${values.length}`);
+  };
+
+  if (payload.manualMargin !== undefined) pushUpdate("commission_manual_margin", payload.manualMargin);
+  if (payload.contractValue !== undefined) pushUpdate("commission_contract_value", payload.contractValue);
+  if (payload.netValue !== undefined) pushUpdate("commission_net_value", payload.netValue);
+  if (payload.termMonths !== undefined) pushUpdate("commission_term_months", payload.termMonths);
+  if (payload.interestRate !== undefined) pushUpdate("commission_interest_rate", payload.interestRate);
+  if (payload.agency !== undefined) pushUpdate("commission_agency", payload.agency);
+  if (payload.contractType !== undefined) pushUpdate("commission_contract_type", payload.contractType);
+  if (payload.pdv !== undefined) pushUpdate("commission_pdv", payload.pdv);
+  if (payload.assignedUserId !== undefined) pushUpdate("assigned_user_id", payload.assignedUserId);
+  if (payload.commissionStatus !== undefined) pushUpdate("commission_status", payload.commissionStatus);
+  if (payload.notes !== undefined) pushUpdate("commission_notes", payload.notes);
+  values.push(params.id);
+
+  await pool.query(
+    `UPDATE loan_opportunities
+     SET
+      ${updates.join(",\n      ")},
+      commission_updated_at = NOW(),
+      updated_at = NOW()
+     WHERE id = $${values.length}`,
+    values,
+  );
+
+  await createAuditLog({
+    actorUserId: user.id,
+    action: "loan.opportunity.commission.update",
+    targetType: "loan_opportunity",
+    targetId: params.id,
+    details: {
+      clientId: target.clientId,
+      fields: Object.keys(payload),
+    },
+  });
+
+  res.json({ ok: true });
 });
 
 loansRouter.patch("/clients/:id/loss-margin", requireAuth, requireRole("admin"), async (req, res) => {
@@ -1215,7 +1509,13 @@ loansRouter.get("/clients", requireAuth, async (req, res) => {
       c.id,
       c.name,
       c.cpf,
+      c.cep,
+      c.address_street AS "addressStreet",
+      c.address_number AS "addressNumber",
+      c.address_complement AS "addressComplement",
+      c.address_neighborhood AS "addressNeighborhood",
       c.city,
+      c.address_state AS "addressState",
       c.profession AS profession,
       c.convenio AS convenio,
       c.income,
@@ -1269,7 +1569,13 @@ loansRouter.get("/clients/:id", requireAuth, async (req, res) => {
       c.id,
       c.name,
       c.cpf,
+      c.cep,
+      c.address_street AS "addressStreet",
+      c.address_number AS "addressNumber",
+      c.address_complement AS "addressComplement",
+      c.address_neighborhood AS "addressNeighborhood",
       c.city,
+      c.address_state AS "addressState",
       c.profession AS profession,
       c.convenio AS convenio,
       c.income,
@@ -1506,14 +1812,21 @@ loansRouter.post("/clients", requireAuth, async (req, res) => {
 
   const created = await pool.query(
     `INSERT INTO loan_clients (
-      name, cpf, city, profession, convenio, income, heat_badge, status, source, assigned_user_id, created_by, updated_at
+      name, cpf, cep, address_street, address_number, address_complement, address_neighborhood, city, address_state,
+      profession, convenio, income, heat_badge, status, source, assigned_user_id, created_by, updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW())
     RETURNING id`,
     [
       payload.name,
       cpf,
+      payload.cep,
+      payload.addressStreet,
+      payload.addressNumber,
+      payload.addressComplement,
+      payload.addressNeighborhood,
       payload.city,
+      payload.addressState,
       payload.profession,
       payload.convenio,
       payload.income,
@@ -1723,21 +2036,33 @@ loansRouter.put("/clients/:id", requireAuth, async (req, res) => {
      SET
       name = $1,
       cpf = $2,
-      city = $3,
-      profession = $4,
-      convenio = $5,
-      income = $6,
-      heat_badge = $7,
-      status = $8,
-      source = $9,
-      assigned_user_id = $10,
+      cep = $3,
+      address_street = $4,
+      address_number = $5,
+      address_complement = $6,
+      address_neighborhood = $7,
+      city = $8,
+      address_state = $9,
+      profession = $10,
+      convenio = $11,
+      income = $12,
+      heat_badge = $13,
+      status = $14,
+      source = $15,
+      assigned_user_id = $16,
       updated_at = NOW()
-     WHERE id = $11
+     WHERE id = $17
      RETURNING id, status, source, assigned_user_id`,
     [
       payload.name,
       cpf,
+      payload.cep,
+      payload.addressStreet,
+      payload.addressNumber,
+      payload.addressComplement,
+      payload.addressNeighborhood,
       payload.city,
+      payload.addressState,
       payload.profession,
       payload.convenio,
       payload.income,

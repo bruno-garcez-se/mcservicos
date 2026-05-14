@@ -49,7 +49,13 @@ export async function createLoanClient(payload: {
   name: string;
   cpf: string;
   phones: string[];
+  cep: string;
+  addressStreet: string;
+  addressNumber: string;
+  addressComplement: string;
+  addressNeighborhood: string;
   city: string;
+  addressState: string;
   profession: string;
   convenio: string;
   income: number;
@@ -86,7 +92,13 @@ export async function updateLoanClient(
     name: string;
     cpf: string;
     phones: string[];
+    cep: string;
+    addressStreet: string;
+    addressNumber: string;
+    addressComplement: string;
+    addressNeighborhood: string;
     city: string;
+    addressState: string;
     profession: string;
     convenio: string;
     income: number;
@@ -242,6 +254,25 @@ export async function getLoanFunnelOutcomeReport(query?: { monthRef?: string }):
     params: query,
   });
   return data;
+}
+
+export async function updateLoanOpportunityCommissionData(
+  opportunityId: number,
+  payload: {
+    manualMargin?: number | null;
+    contractValue?: number | null;
+    netValue?: number | null;
+    termMonths?: number | null;
+    interestRate?: number | null;
+    agency?: string;
+    contractType?: string;
+    pdv?: string;
+    assignedUserId?: number | null;
+    commissionStatus?: "pendente" | "pago";
+    notes?: string;
+  },
+): Promise<void> {
+  await http.patch(`/loans/opportunities/${opportunityId}/commission-data`, payload);
 }
 
 export async function listLoanPipelineStages(): Promise<LoanPipelineStage[]> {
@@ -400,5 +431,78 @@ export async function simularServidorAgora(id: number): Promise<{
     produtoRecomendado: string;
     prioridadeAtendimento: "Alta" | "Media" | "Baixa";
   }>(`/api/servidores-importados/${id}/simular`);
+  return data;
+}
+
+export async function syncServidoresSeconsigTeste(payload: {
+  items: Array<{
+    servidorId: number;
+    nomeEncontrado?: string;
+    cpf?: string;
+    margemAtual?: number;
+    status?: string;
+    payload?: unknown;
+  }>;
+}): Promise<{
+  atualizados: number;
+  ignorados: number;
+}> {
+  const { data } = await http.post<{
+    atualizados: number;
+    ignorados: number;
+  }>("/api/servidores-importados/seconsig/test-sync", payload);
+  return data;
+}
+
+export async function runServidoresSeconsigTeste(payload: {
+  baseUrl: string;
+  username: string;
+  password: string;
+  grupoConsignante: string;
+  targets: Array<{
+    servidorId: number;
+    nome?: string;
+    matricula: string;
+  }>;
+}): Promise<{
+  items: Array<{
+    servidorId: number;
+    nomePesquisado: string;
+    nomeEncontrado?: string;
+    cpf?: string;
+    margemAtual?: number;
+    status?: string;
+    payload?: unknown;
+    found: boolean;
+    exactMatch: boolean;
+    error?: string;
+  }>;
+  stats?: {
+    processados: number;
+    encontrados: number;
+    naoEncontrados: number;
+    falhas: number;
+  };
+}> {
+  const { data } = await http.post<{
+    items: Array<{
+      servidorId: number;
+      nomePesquisado: string;
+      nomeEncontrado?: string;
+      cpf?: string;
+      margemAtual?: number;
+      status?: string;
+      payload?: unknown;
+      found: boolean;
+      exactMatch: boolean;
+      error?: string;
+    }>;
+    stats?: {
+      processados: number;
+      encontrados: number;
+      naoEncontrados: number;
+      falhas: number;
+    };
+  }>("/api/servidores-importados/seconsig/test-run", payload);
   return data;
 }

@@ -4,11 +4,13 @@ import { z } from "zod";
 import { requireAuth } from "../../middlewares/auth";
 import { createAuditLog } from "../audit/audit.service";
 import {
+  aplicarSeconsigSyncTeste,
   ensureTransparenciaStructures,
   importarServidores,
   simularServidorImportado,
 } from "./transparencia.service";
 import { pool } from "../../db/pool";
+import { runSeconsigSyncTeste } from "./seconsig.service";
 
 const importarSchema = z.object({
   ano: z.coerce.number().int().min(2000).max(2100),
@@ -202,6 +204,11 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
       produto_recomendado AS "produtoRecomendado",
       motivo_recomendacao AS "motivoRecomendacao",
       prioridade_atendimento AS "prioridadeAtendimento",
+      lc.cpf AS "cpfRelacionado",
+      seconsig_cpf AS "seconsigCpf",
+      seconsig_margem_atual AS "seconsigMargemAtual",
+      seconsig_status AS "seconsigStatus",
+      seconsig_updated_at AS "seconsigUpdatedAt",
       raw_list_payload AS "rawListPayload",
       raw_detail_payload AS "rawDetailPayload",
       COALESCE(
@@ -210,6 +217,14 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
             jsonb_build_object(
               'nome',
               UPPER(TRIM(nome_raw)),
+              'tipo',
+              CASE
+                WHEN UPPER(TRIM(tipo_raw)) LIKE '%DESCONTO%'
+                  OR UPPER(TRIM(tipo_raw)) LIKE '%DEBIT%'
+                  OR UPPER(TRIM(tipo_raw)) IN ('D', 'DESC')
+                THEN 'Desconto'
+                ELSE 'Receita'
+              END,
               'valor',
               ABS(
                 CASE
@@ -258,16 +273,19 @@ transparenciaRouter.get("/servidores-importados", requireAuth, async (req, res) 
           ) rub
           WHERE
             TRIM(nome_raw) <> ''
-            AND (
-              UPPER(TRIM(tipo_raw)) LIKE '%DESCONTO%'
-              OR UPPER(TRIM(tipo_raw)) LIKE '%DEBIT%'
-              OR UPPER(TRIM(tipo_raw)) IN ('D', 'DESC')
-            )
         ),
         '[]'::jsonb
       ) AS rubricas,
       imported_at AS "importedAt"
     FROM loan_public_servants s
+    LEFT JOIN LATERAL (
+      SELECT c.cpf
+      FROM loan_clients c
+      WHERE c.deleted_at IS NULL
+        AND LOWER(BTRIM(c.name)) = LOWER(BTRIM(s.name))
+      ORDER BY c.updated_at DESC NULLS LAST, c.id DESC
+      LIMIT 1
+    ) lc ON TRUE
     ${whereClause}
     ORDER BY imported_at DESC
     LIMIT $${dataParams.length - 1}
@@ -346,6 +364,69 @@ transparenciaRouter.post("/servidores-importados/:id/simular", requireAuth, asyn
   await ensureTransparenciaStructures();
   const params = z.object({ id: z.coerce.number().int().positive() }).parse(req.params);
   const result = await simularServidorImportado({ id: params.id });
+  res.json(result);
+});
+
+transparenciaRouter.post("/servidores-importados/seconsig/test-sync", requireAuth, async (req, res) => {
+  await ensureTransparenciaStructures();
+  const user = req.user!;
+  const payload = z
+    .object({
+      items: z
+        .array(
+          z.object({
+            servidorId: z.coerce.number().int().positive(),
+            nomeEncontrado: z.string().trim().optional(),
+            cpf: z.string().trim().optional(),
+            margemAtual: z.coerce.number().optional(),
+            status: z.string().trim().optional(),
+            payload: z.unknown().optional(),
+          }),
+        )
+        .max(3000),
+    })
+    .parse(req.body);
+
+  const result = await aplicarSeconsigSyncTeste({
+    actorUserId: user.id,
+    items: payload.items,
+  });
+
+  await createAuditLog({
+    actorUserId: user.id,
+    action: "loan.public_servants.seconsig_test_sync",
+    targetType: "loan_public_servants",
+    targetId: null,
+    details: {
+      totalItens: payload.items.length,
+      atualizados: result.atualizados,
+      ignorados: result.ignorados,
+    },
+  });
+
+  res.json(result);
+});
+
+transparenciaRouter.post("/servidores-importados/seconsig/test-run", requireAuth, async (req, res) => {
+  const payload = z
+    .object({
+      baseUrl: z.string().trim().min(5),
+      username: z.string().trim().min(1),
+      password: z.string().min(1),
+      grupoConsignante: z.string().trim().min(3),
+      targets: z
+        .array(
+          z.object({
+            servidorId: z.coerce.number().int().positive(),
+            nome: z.string().trim().optional(),
+            matricula: z.string().trim().min(1),
+          }),
+        )
+        .max(3000),
+    })
+    .parse(req.body);
+
+  const result = await runSeconsigSyncTeste(payload);
   res.json(result);
 });
 

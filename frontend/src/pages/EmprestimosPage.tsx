@@ -35,10 +35,10 @@ import {
   listLoanProducts,
   listLoanSimulations,
   markLoanClientActivityTouch,
-  simularServidorAgora,
   updateLoanClient,
   updateLoanClientHeatBadge,
   updateLoanClientLossMargin,
+  updateLoanOpportunityCommissionData,
   updateLoanSettings,
   updateLoanClientStatus,
   updateLoanPipelineStages,
@@ -116,6 +116,19 @@ type LoanDashboardState = {
   productsMostSold: Array<{ product_type: string; total: number }>;
 };
 type LoanClientsListResponse = Awaited<ReturnType<typeof listLoanClients>>;
+type CommissionDraft = {
+  manualMargin: string;
+  contractValue: string;
+  netValue: string;
+  termMonths: string;
+  interestRate: string;
+  agency: string;
+  contractType: string;
+  pdv: string;
+  assignedUserId: string;
+  commissionStatus: "pendente" | "pago";
+  notes: string;
+};
 
 const DEFAULT_MESSAGE_TEMPLATES = [
   "Oi {nome}, tudo bem? Posso te enviar as melhores opções de crédito agora?",
@@ -196,6 +209,59 @@ function formatPhone(value: string): string {
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
 }
 
+function formatCep(value: string): string {
+  const digits = onlyDigits(value).slice(0, 8);
+  if (!digits) return "";
+  if (digits.length <= 5) return digits;
+  return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+}
+
+function formatCurrencyInput(value: string): string {
+  const digits = onlyDigits(value);
+  if (!digits) return "";
+  const amount = Number(digits) / 100;
+  return amount.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function normalizeCurrencyInput(value: string): string {
+  const digits = onlyDigits(value);
+  if (!digits) return "";
+  const amount = Number(digits) / 100;
+  return amount.toFixed(2);
+}
+
+function parseLocaleNumber(value: string): number | null {
+  const raw = value.trim().replace(/\s/g, "").replace("R$", "");
+  if (!raw) return null;
+
+  const onlyNumberChars = raw.replace(/[^\d,.-]/g, "");
+  if (!onlyNumberChars) return null;
+
+  const lastComma = onlyNumberChars.lastIndexOf(",");
+  const lastDot = onlyNumberChars.lastIndexOf(".");
+  let normalized = onlyNumberChars;
+
+  if (lastComma > -1 && lastDot > -1) {
+    if (lastComma > lastDot) {
+      normalized = onlyNumberChars.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = onlyNumberChars.replace(/,/g, "");
+    }
+  } else if (lastComma > -1) {
+    normalized = onlyNumberChars.replace(/\./g, "").replace(",", ".");
+  } else if (/^\d{1,3}(\.\d{3})+$/.test(onlyNumberChars)) {
+    normalized = onlyNumberChars.replace(/\./g, "");
+  } else {
+    normalized = onlyNumberChars.replace(/,/g, "");
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function monthRefLabel(value: string): string {
   if (!/^\d{4}-\d{2}$/.test(value)) return value;
   const year = Number(value.slice(0, 4));
@@ -227,66 +293,6 @@ function getChannelLabel(channel: string): string {
   const normalized = channel.trim().toLowerCase();
   if (normalized === "manual" || normalized === "presencial") return "Presencial";
   return INTERACTION_CHANNEL_OPTIONS.find((item) => item.value === normalized)?.label ?? channel;
-}
-
-function formatRawJson(payload: unknown): string {
-  if (payload === null || payload === undefined) return "-";
-  try {
-    return JSON.stringify(payload, null, 2);
-  } catch {
-    return String(payload);
-  }
-}
-
-type RawFieldItem = {
-  path: string;
-  value: string;
-};
-
-function formatRawFieldValue(value: unknown): string {
-  if (value === null) return "null";
-  if (value === undefined) return "undefined";
-  if (typeof value === "string") return value.trim() ? value : "(vazio)";
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") return String(value);
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function collectRawFields(payload: unknown, basePath = ""): RawFieldItem[] {
-  if (Array.isArray(payload)) {
-    if (payload.length === 0) {
-      return [{ path: basePath || "(raiz)", value: "[]" }];
-    }
-    return payload.flatMap((item, index) =>
-      collectRawFields(item, basePath ? `${basePath}[${index}]` : `[${index}]`),
-    );
-  }
-  if (payload && typeof payload === "object") {
-    const entries = Object.entries(payload as Record<string, unknown>);
-    if (entries.length === 0) {
-      return [{ path: basePath || "(raiz)", value: "{}" }];
-    }
-    return entries.flatMap(([key, value]) =>
-      collectRawFields(value, basePath ? `${basePath}.${key}` : key),
-    );
-  }
-  return [{ path: basePath || "(raiz)", value: formatRawFieldValue(payload) }];
-}
-
-function sortRawFields(fields: RawFieldItem[]): RawFieldItem[] {
-  return [...fields].sort((a, b) => a.path.localeCompare(b.path, "pt-BR", { sensitivity: "base" }));
-}
-
-function filterRawFields(fields: RawFieldItem[], query: string): RawFieldItem[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) return fields;
-  return fields.filter(
-    (field) =>
-      field.path.toLowerCase().includes(normalizedQuery) || field.value.toLowerCase().includes(normalizedQuery),
-  );
 }
 
 function extractApiMessage(error: unknown, fallback: string): string {
@@ -651,10 +657,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     name: "",
     cpf: "",
     phones: [""],
+    cep: "",
+    addressStreet: "",
+    addressNumber: "",
+    addressComplement: "",
+    addressNeighborhood: "",
     city: "",
+    addressState: "",
     profession: "",
-    convenio: "INSS",
-    income: "",
+    convenio: "",
+    income: "0",
     heatBadge: null as "Quente" | "Morno" | "Frio" | null,
     source: "manual",
     status: "novo" as LoanClientStatus,
@@ -663,6 +675,8 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   });
   const [sellerOptions, setSellerOptions] = useState<Array<{ id: number; name: string; email: string }>>([]);
   const [isSellerModalOpen, setIsSellerModalOpen] = useState(false);
+  const [isLoadingCep, setIsLoadingCep] = useState(false);
+  const [cepLookupMessage, setCepLookupMessage] = useState("");
   const [interactionText, setInteractionText] = useState("");
   const [interactionChannel, setInteractionChannel] = useState("presencial");
   const [interactionScheduledFor, setInteractionScheduledFor] = useState("");
@@ -703,29 +717,54 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const [lostReasonText, setLostReasonText] = useState("");
   const [lostHasMargin, setLostHasMargin] = useState<"" | "sim" | "nao">("");
   const [isSummaryEditing, setIsSummaryEditing] = useState(false);
-  const [summaryOverrides, setSummaryOverrides] = useState<Record<number, { simulation: string; product: string }>>(() => {
+  const [summaryOverrides, setSummaryOverrides] = useState<
+    Record<
+      number,
+      {
+        contractValue: string;
+        netValue: string;
+        termMonths: string;
+        interestRate: string;
+        agency: string;
+        convenio: string;
+        contractType: string;
+        pdv: string;
+        seguro: string;
+      }
+    >
+  >(() => {
     try {
       const raw = localStorage.getItem("loan:summary-overrides");
       if (!raw) return {};
-      return JSON.parse(raw) as Record<number, { simulation: string; product: string }>;
+      return JSON.parse(raw) as Record<
+        number,
+        {
+          contractValue: string;
+          netValue: string;
+          termMonths: string;
+          interestRate: string;
+          agency: string;
+          convenio: string;
+          contractType: string;
+          pdv: string;
+          seguro: string;
+        }
+      >;
     } catch {
       return {};
     }
   });
   const [whatsMenuClientId, setWhatsMenuClientId] = useState<number | null>(null);
   const [clientSummaryForm, setClientSummaryForm] = useState({
-    name: "",
-    cpf: "",
-    city: "",
-    profession: "",
+    contractValue: "",
+    netValue: "",
+    termMonths: "",
+    interestRate: "",
+    agency: "",
     convenio: "",
-    income: "",
-    status: "novo" as LoanClientStatus,
-    marginAvailable: "",
-    simulation: "",
-    product: "",
-    source: "",
-    phones: "",
+    contractType: "",
+    pdv: "",
+    seguro: "",
   });
   const [loadingAgendaCompleteId, setLoadingAgendaCompleteId] = useState<number | null>(null);
   const [movingNextStageClientId, setMovingNextStageClientId] = useState<number | null>(null);
@@ -829,9 +868,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   } | null>(null);
   const [servidoresImportados, setServidoresImportados] = useState<ImportedServant[]>([]);
   const [servidoresExpandidos, setServidoresExpandidos] = useState<number[]>([]);
-  const [rawFieldsSearch, setRawFieldsSearch] = useState<
-    Record<number, { lista: string; detalhe: string }>
-  >({});
   const [rubricasDescontoOptions, setRubricasDescontoOptions] = useState<
     Array<{ nome: string; total: number }>
   >([]);
@@ -940,8 +976,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const [consignadoRate, setConsignadoRate] = useState("1.8");
   const [pessoalRate, setPessoalRate] = useState("3.5");
   const [isSavingLoanSettings, setIsSavingLoanSettings] = useState(false);
-  const [simulandoServidorId, setSimulandoServidorId] = useState<number | null>(null);
-  const [simulacoesRecentesIds, setSimulacoesRecentesIds] = useState<number[]>([]);
   const [clientesPaginacao, setClientesPaginacao] = useState({
     page: 1,
     pageSize: (() => {
@@ -1009,9 +1043,22 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     convenio: "",
     source: "",
   });
+  const [comissaoFiltro, setComissaoFiltro] = useState<{
+    monthRef: string;
+    busca: string;
+    vendedorId: string;
+    commissionStatus: "" | "pendente" | "pago";
+  }>({
+    monthRef: "",
+    busca: "",
+    vendedorId: "",
+    commissionStatus: "",
+  });
   const [funnelOutcomeReport, setFunnelOutcomeReport] = useState<LoanFunnelOutcomeReport | null>(null);
   const [funnelOutcomeReportLoading, setFunnelOutcomeReportLoading] = useState(false);
   const [updatingLossMarginClientId, setUpdatingLossMarginClientId] = useState<number | null>(null);
+  const [updatingCommissionOpportunityId, setUpdatingCommissionOpportunityId] = useState<number | null>(null);
+  const [commissionDrafts, setCommissionDrafts] = useState<Record<number, CommissionDraft>>({});
   const [servidoresFiltro, setServidoresFiltro] = useState(() => {
     try {
       const raw = localStorage.getItem(SERVIDORES_FILTERS_STORAGE_KEY);
@@ -1297,60 +1344,23 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     const source = newTemplateDraft.trim() || selectedTemplateBase || DEFAULT_MESSAGE_TEMPLATES[0];
     return applyTemplateTags(source, templateClient);
   }, [templateClient, newTemplateDraft, selectedTemplateBase]);
-  const selectedClientSummaryOverride = useMemo(
-    () => (selectedClient ? summaryOverrides[selectedClient.id] : undefined),
-    [selectedClient, summaryOverrides],
-  );
   useEffect(() => {
     if (!selectedClient) return;
     const override = summaryOverrides[selectedClient.id];
-    const marginValue = (Number(selectedClient.income || 0) * Number(consignableMarginPercent || "30")) / 100;
-    const monthlyRate = Number(consignadoRate || "1.8") / 100;
-    const terms = [36, 48, 60, 72];
-    let bestInstallments = 0;
-    let bestPrincipal = 0;
-    for (const installments of terms) {
-      const principal =
-        monthlyRate > 0
-          ? marginValue * ((1 - (1 + monthlyRate) ** -installments) / monthlyRate)
-          : marginValue * installments;
-      if (principal > bestPrincipal) {
-        bestPrincipal = principal;
-        bestInstallments = installments;
-      }
-    }
-    const defaultProduct =
-      marginValue <= 0
-        ? "Sem margem"
-        : (selectedClient.convenio?.trim() ? "Com consignado" : "Sem consignado") === "Sem consignado"
-          ? "Primeiro consignado"
-          : marginValue < 200
-            ? "Refinanciamento"
-            : "Crédito consignado";
     setClientSummaryForm({
-      name: selectedClient.name || "",
-      cpf: selectedClient.cpf || "",
-      city: selectedClient.city || "",
-      profession: selectedClient.profession || "",
-      convenio: selectedClient.convenio || "",
-      income: String(Number(selectedClient.income || 0)),
-      status: selectedClient.status,
-      marginAvailable: String(Number.isFinite(marginValue) ? marginValue : 0),
-      simulation:
-        override?.simulation ??
-        (bestInstallments > 0
-          ? `${bestInstallments}x de ${marginValue.toLocaleString("pt-BR", {
-              style: "currency",
-              currency: "BRL",
-            })}`
-          : "Sem simulação"),
-      product: override?.product ?? defaultProduct,
-      source: selectedClient.source || "",
-      phones: selectedClient.phones.join(", "),
+      contractValue: formatCurrencyInput(override?.contractValue ?? ""),
+      netValue: formatCurrencyInput(override?.netValue ?? ""),
+      termMonths: override?.termMonths ?? "",
+      interestRate: override?.interestRate ?? "",
+      agency: override?.agency ?? "",
+      convenio: override?.convenio ?? selectedClient.convenio ?? "",
+      contractType: override?.contractType ?? "",
+      pdv: override?.pdv ?? "",
+      seguro: formatCurrencyInput(override?.seguro ?? ""),
     });
     setIsHeatBadgeMenuOpen(false);
     setIsSummaryEditing(false);
-  }, [selectedClient, summaryOverrides, consignableMarginPercent, consignadoRate]);
+  }, [selectedClient, summaryOverrides]);
   useEffect(() => {
     try {
       localStorage.setItem("loan:summary-overrides", JSON.stringify(summaryOverrides));
@@ -1776,6 +1786,134 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     }
   }
 
+  function buildCommissionDraft(item: LoanFunnelOutcomeReport["items"][number]): CommissionDraft {
+    const cardValues = summaryOverrides[item.id];
+    return {
+      manualMargin: item.commissionManualMargin === null ? "" : String(item.commissionManualMargin),
+      contractValue:
+        item.commissionContractValue === null ? (cardValues?.contractValue ?? "") : String(item.commissionContractValue),
+      netValue: item.commissionNetValue === null ? (cardValues?.netValue ?? "") : String(item.commissionNetValue),
+      termMonths: item.commissionTermMonths === null ? (cardValues?.termMonths ?? "") : String(item.commissionTermMonths),
+      interestRate:
+        item.commissionInterestRate === null ? (cardValues?.interestRate ?? "") : String(item.commissionInterestRate),
+      agency: (item.commissionAgency ?? "").trim() || cardValues?.agency || "",
+      contractType: (item.commissionContractType ?? "").trim() || cardValues?.contractType || "",
+      pdv: (item.commissionPdv ?? "").trim() || cardValues?.pdv || "",
+      assignedUserId: item.assignedUserId ? String(item.assignedUserId) : "",
+      commissionStatus: item.commissionStatus ?? "pendente",
+      notes: item.commissionNotes ?? "",
+    };
+  }
+
+  async function onSaveCommissionData(item: LoanFunnelOutcomeReport["items"][number]): Promise<void> {
+    const draft = commissionDrafts[item.opportunityId] ?? buildCommissionDraft(item);
+    const parseOptionalNumber = (value: string): number | null => {
+      return parseLocaleNumber(value);
+    };
+    const parseOptionalInt = (value: string): number | null => {
+      const normalized = value.trim();
+      if (!normalized) return null;
+      const parsed = Number(normalized);
+      if (!Number.isFinite(parsed)) return null;
+      return Math.max(1, Math.round(parsed));
+    };
+
+    setUpdatingCommissionOpportunityId(item.opportunityId);
+    try {
+      await updateLoanOpportunityCommissionData(item.opportunityId, {
+        manualMargin: parseOptionalNumber(draft.manualMargin),
+        contractValue: parseOptionalNumber(draft.contractValue),
+        netValue: parseOptionalNumber(draft.netValue),
+        termMonths: parseOptionalInt(draft.termMonths),
+        interestRate: parseOptionalNumber(draft.interestRate),
+        agency: draft.agency.trim(),
+        contractType: draft.contractType.trim(),
+        pdv: draft.pdv.trim(),
+        assignedUserId: isAdmin ? (Number(draft.assignedUserId) || null) : undefined,
+        commissionStatus: draft.commissionStatus,
+        notes: draft.notes.trim(),
+      });
+      const nextAssignedUserId = Number(draft.assignedUserId) || null;
+      const nextAssignedUserName =
+        sellerOptions.find((seller) => seller.id === nextAssignedUserId)?.name ?? item.assignedUserName ?? null;
+      setFunnelOutcomeReport((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          items: current.items.map((entry) =>
+            entry.opportunityId === item.opportunityId
+              ? {
+                  ...entry,
+                  commissionManualMargin: parseOptionalNumber(draft.manualMargin),
+                  commissionContractValue: parseOptionalNumber(draft.contractValue),
+                  commissionNetValue: parseOptionalNumber(draft.netValue),
+                  commissionTermMonths: parseOptionalInt(draft.termMonths),
+                  commissionInterestRate: parseOptionalNumber(draft.interestRate),
+                  commissionAgency: draft.agency.trim(),
+                  commissionContractType: draft.contractType.trim(),
+                  commissionPdv: draft.pdv.trim(),
+                  assignedUserId: isAdmin ? nextAssignedUserId : entry.assignedUserId,
+                  assignedUserName: isAdmin ? nextAssignedUserName : entry.assignedUserName,
+                  commissionStatus: draft.commissionStatus,
+                  commissionNotes: draft.notes.trim(),
+                  commissionUpdatedAt: new Date().toISOString(),
+                }
+              : entry,
+          ),
+        };
+      });
+      setMessage("Dados de comissão atualizados.");
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Falha ao salvar dados de comissão."));
+    } finally {
+      setUpdatingCommissionOpportunityId(null);
+    }
+  }
+
+  async function onAdminExcluirGanho(item: LoanFunnelOutcomeReport["items"][number]): Promise<void> {
+    if (!isAdmin) return;
+    const ganhoIndex = statusFlow.findIndex((status) => status.key === "ganho");
+    const previousActiveStatus =
+      ganhoIndex > 0
+        ? statusFlow
+            .slice(0, ganhoIndex)
+            .reverse()
+            .find((status) => !isTerminalFlowStatus(status.key))?.key ?? null
+        : null;
+    const fallbackStatus = getFirstCycleStatus();
+    const targetStatus = previousActiveStatus ?? fallbackStatus;
+    if (!targetStatus) {
+      setMessage("Não foi possível identificar a etapa de retorno no funil.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Deseja excluir este card de ganho e retornar o cliente para "${getStatusLabel(targetStatus)}"?`,
+      )
+    ) {
+      return;
+    }
+    setUpdatingCommissionOpportunityId(item.opportunityId);
+    try {
+      await updateLoanClientStatus(item.id, targetStatus);
+      invalidateLoanViewCaches();
+      await Promise.all([
+        loadFunnelOutcomeReportData(),
+        refreshVisibleLoanData({ includeCadastro: true, includeAgenda: true }),
+      ]);
+      setCommissionDrafts((current) => {
+        const next = { ...current };
+        delete next[item.opportunityId];
+        return next;
+      });
+      setMessage(`Card removido de ganho e retornado para ${getStatusLabel(targetStatus)}.`);
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Não foi possível excluir o ganho."));
+    } finally {
+      setUpdatingCommissionOpportunityId(null);
+    }
+  }
+
   async function loadClientDetails(clientId: number): Promise<void> {
     try {
       const [simulationsData, opportunitiesData, timelineData] = await Promise.all([
@@ -1902,6 +2040,40 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     if (loading || loanSection !== "relatorios") return;
     void loadFunnelOutcomeReportData();
   }, [loanSection, relatoriosFiltro.monthRef, loading]);
+
+  useEffect(() => {
+    if (loading || loanSection !== "comissao") return;
+    if (comissaoFiltro.monthRef !== relatoriosFiltro.monthRef) {
+      setRelatoriosFiltro((prev) => ({ ...prev, monthRef: comissaoFiltro.monthRef }));
+      return;
+    }
+    void loadFunnelOutcomeReportData();
+  }, [loanSection, comissaoFiltro.monthRef, relatoriosFiltro.monthRef, loading]);
+
+  useEffect(() => {
+    if (!funnelOutcomeReport || loanSection !== "comissao") return;
+    setCommissionDrafts((current) => {
+      const next = { ...current };
+      for (const item of funnelOutcomeReport.items) {
+        const draft = next[item.opportunityId];
+        const hasCardValues = Boolean(summaryOverrides[item.id]);
+        const shouldHydrateFromCard =
+          hasCardValues &&
+          draft &&
+          !draft.contractValue &&
+          !draft.netValue &&
+          !draft.termMonths &&
+          !draft.interestRate &&
+          !draft.agency &&
+          !draft.contractType &&
+          !draft.pdv;
+        if (!draft || shouldHydrateFromCard) {
+          next[item.opportunityId] = buildCommissionDraft(item);
+        }
+      }
+      return next;
+    });
+  }, [funnelOutcomeReport, loanSection, summaryOverrides]);
 
   useEffect(() => {
     try {
@@ -2041,6 +2213,67 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   }, [selectedClientId]);
 
   useEffect(() => {
+    const cepDigits = onlyDigits(clientForm.cep);
+    if (cepDigits.length !== 8) {
+      setCepLookupMessage("");
+      setIsLoadingCep(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setIsLoadingCep(true);
+          const response = await fetch(`https://viacep.com.br/ws/${cepDigits}/json/`, {
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            setCepLookupMessage("Não foi possível consultar o CEP agora.");
+            return;
+          }
+          const data = (await response.json()) as {
+            erro?: boolean;
+            logradouro?: string;
+            bairro?: string;
+            localidade?: string;
+            uf?: string;
+          };
+          if (data.erro) {
+            setCepLookupMessage("CEP não encontrado.");
+            return;
+          }
+          setClientForm((prev) => {
+            if (onlyDigits(prev.cep) !== cepDigits) return prev;
+            return {
+              ...prev,
+              addressStreet: prev.addressStreet || data.logradouro || "",
+              addressNeighborhood: prev.addressNeighborhood || data.bairro || "",
+              city: prev.city || data.localidade || "",
+              addressState: prev.addressState || data.uf || "",
+            };
+          });
+          setCepLookupMessage("Endereço preenchido automaticamente. Você pode editar se precisar.");
+        } catch {
+          if (!controller.signal.aborted) {
+            setCepLookupMessage("Não foi possível consultar o CEP agora.");
+          }
+        } finally {
+          if (!controller.signal.aborted) {
+            setIsLoadingCep(false);
+          }
+        }
+      })();
+    }, 350);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      setIsLoadingCep(false);
+    };
+  }, [clientForm.cep]);
+
+  useEffect(() => {
     if (whatsMenuClientId === null) return;
     const onWindowClick = () => setWhatsMenuClientId(null);
     window.addEventListener("click", onWindowClick);
@@ -2092,10 +2325,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       phones: clientForm.phones
         .map((item) => item.trim())
         .filter(Boolean),
+      cep: clientForm.cep,
+      addressStreet: clientForm.addressStreet,
+      addressNumber: clientForm.addressNumber,
+      addressComplement: clientForm.addressComplement,
+      addressNeighborhood: clientForm.addressNeighborhood,
       city: clientForm.city,
+      addressState: clientForm.addressState,
       profession: clientForm.profession,
-      convenio: clientForm.convenio,
-      income: Number(clientForm.income || 0),
+      convenio: "",
+      income: 0,
       heatBadge: clientForm.heatBadge,
       source: clientForm.source,
       status: clientForm.status,
@@ -2112,10 +2351,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
         name: "",
         cpf: "",
         phones: [""],
+        cep: "",
+        addressStreet: "",
+        addressNumber: "",
+        addressComplement: "",
+        addressNeighborhood: "",
         city: "",
+        addressState: "",
         profession: "",
-        convenio: "INSS",
-        income: "",
+        convenio: "",
+        income: "0",
         heatBadge: null,
         source: "manual",
         status: "novo",
@@ -2147,9 +2392,15 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       name: client.name,
       cpf: formatCpf(client.cpf),
       phones: client.phones.length > 0 ? client.phones.map((item) => formatPhone(item)) : [""],
+      cep: formatCep(client.cep || ""),
+      addressStreet: client.addressStreet || "",
+      addressNumber: client.addressNumber || "",
+      addressComplement: client.addressComplement || "",
+      addressNeighborhood: client.addressNeighborhood || "",
       city: client.city || "",
+      addressState: client.addressState || "",
       profession: client.profession || "",
-      convenio: client.convenio || "INSS",
+      convenio: client.convenio || "",
       income: String(Number(client.income || 0)),
       heatBadge: client.heatBadge ?? null,
       source: client.source || "manual",
@@ -2211,12 +2462,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     });
     try {
       await updateLoanClientStatus(clientId, status);
-      invalidateLoanViewCaches();
-      await refreshVisibleLoanData();
       setRecentlyMovedClientId(clientId);
       window.setTimeout(() => {
         setRecentlyMovedClientId((current) => (current === clientId ? null : current));
       }, 1200);
+      invalidateLoanViewCaches();
+      try {
+        await refreshVisibleLoanData();
+      } catch (error) {
+        setMessage(extractApiMessage(error, "Status atualizado, mas falhou ao recarregar os dados."));
+      }
     } catch (error) {
       setClients(previous);
       setKanbanCardsByStatus(previousByStatus);
@@ -2806,17 +3061,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     }
   };
 
-  const getImportedScoreHeatClassName = (classificacaoScore: ImportedServant["classificacaoScore"]): string => {
-    if (classificacaoScore === "Quente") return "loan-heat-quente";
-    if (classificacaoScore === "Morno") return "loan-heat-morno";
-    return "loan-heat-frio";
-  };
-
-  const prioridadeBadge = (prioridade: ImportedServant["prioridadeAtendimento"]): string => {
-    if (prioridade === "Alta") return "🔥 Alta";
-    if (prioridade === "Baixa") return "❄ Baixa";
-    return "🟡 Media";
-  };
   const getClientHeatLevel = (client: LoanClient): "Quente" | "Morno" | "Frio" => {
     if (client.heatBadge === "Quente") return "Quente";
     if (client.heatBadge === "Morno") return "Morno";
@@ -3036,48 +3280,124 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
   const onSaveClientSummary = async () => {
     if (!selectedClient) return;
     try {
-      const marginAvailable = Number(clientSummaryForm.marginAvailable || 0);
-      const incomeFromMargin =
-        Number.isFinite(marginAvailable) && marginAvailable >= 0
-          ? (marginAvailable * 100) / Number(consignableMarginPercent || "30")
-          : Number(clientSummaryForm.income || 0);
-      await updateLoanClient(selectedClient.id, {
-        name: clientSummaryForm.name.trim() || selectedClient.name,
-        cpf: clientSummaryForm.cpf.trim() || selectedClient.cpf,
-        phones:
-          clientSummaryForm.phones.trim().length > 0
-            ? clientSummaryForm.phones
-                .split(/[,;]+/)
-                .map((item) => item.trim())
-                .filter(Boolean)
-            : selectedClient.phones,
-        city: clientSummaryForm.city.trim(),
-        profession: clientSummaryForm.profession.trim(),
-        convenio: clientSummaryForm.convenio.trim(),
-        income: Number.isFinite(incomeFromMargin) ? incomeFromMargin : Number(clientSummaryForm.income || 0),
-        heatBadge: selectedClient.heatBadge ?? null,
-        source: clientSummaryForm.source.trim() || "manual",
-        status: clientSummaryForm.status,
-        assignedUserId: selectedClient.assignedUserId ?? undefined,
-      });
-      invalidateLoanViewCaches();
-      const refreshedClient = await getLoanClientById(selectedClient.id);
-      setClients((current) =>
-        current.some((item) => item.id === refreshedClient.id)
-          ? current.map((item) => (item.id === refreshedClient.id ? refreshedClient : item))
-          : [refreshedClient, ...current],
-      );
+      const normalizedContractValue = normalizeCurrencyInput(clientSummaryForm.contractValue);
+      const normalizedNetValue = normalizeCurrencyInput(clientSummaryForm.netValue);
+      const normalizedSeguro = normalizeCurrencyInput(clientSummaryForm.seguro);
+      const normalizedTermMonths = clientSummaryForm.termMonths.trim();
+      const normalizedInterestRateNumber = parseLocaleNumber(clientSummaryForm.interestRate);
+      const normalizedInterestRate = normalizedInterestRateNumber === null ? "" : String(normalizedInterestRateNumber);
+      const normalizedAgency = clientSummaryForm.agency.trim();
+      const normalizedConvenio = clientSummaryForm.convenio.trim();
+      const normalizedContractType = clientSummaryForm.contractType.trim();
+      const normalizedPdv = clientSummaryForm.pdv.trim();
       setSummaryOverrides((current) => ({
         ...current,
         [selectedClient.id]: {
-          simulation: clientSummaryForm.simulation,
-          product: clientSummaryForm.product,
+          contractValue: normalizedContractValue,
+          netValue: normalizedNetValue,
+          termMonths: normalizedTermMonths,
+          interestRate: normalizedInterestRate,
+          agency: normalizedAgency,
+          convenio: normalizedConvenio,
+          contractType: normalizedContractType,
+          pdv: normalizedPdv,
+          seguro: normalizedSeguro,
         },
       }));
+
+      const parseOptionalNumber = (value: string): number | null => {
+        return parseLocaleNumber(value);
+      };
+      const parseOptionalInt = (value: string): number | null => {
+        const normalized = value.trim();
+        if (!normalized) return null;
+        const parsed = Number(normalized);
+        if (!Number.isFinite(parsed)) return null;
+        return Math.max(1, Math.round(parsed));
+      };
+      const gainOpportunityFromReport = (funnelOutcomeReport?.items ?? [])
+        .filter((item) => item.id === selectedClient.id && item.status === "ganho")
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+      let gainOpportunityId = gainOpportunityFromReport?.opportunityId ?? null;
+
+      if (!gainOpportunityId) {
+        try {
+          const opportunities = await listLoanOpportunities(selectedClient.id);
+          const gainOpportunityFromClient = opportunities
+            .filter((item) => item.outcome === "ganho" || item.status === "ganho")
+            .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+          gainOpportunityId = gainOpportunityFromClient?.id ?? null;
+        } catch {
+          // Se não conseguir carregar oportunidades, mantém o salvamento local do card.
+        }
+      }
+
+      if (gainOpportunityId) {
+        try {
+          await updateLoanOpportunityCommissionData(gainOpportunityId, {
+            contractValue: parseOptionalNumber(normalizedContractValue),
+            netValue: parseOptionalNumber(normalizedNetValue),
+            termMonths: parseOptionalInt(normalizedTermMonths),
+            interestRate: parseOptionalNumber(normalizedInterestRate),
+            agency: normalizedAgency,
+            contractType: normalizedContractType,
+            pdv: normalizedPdv,
+          });
+          setFunnelOutcomeReport((current) => {
+            if (!current) return current;
+            return {
+              ...current,
+              items: current.items.map((entry) =>
+                entry.opportunityId === gainOpportunityId
+                  ? {
+                      ...entry,
+                      commissionContractValue: parseOptionalNumber(normalizedContractValue),
+                      commissionNetValue: parseOptionalNumber(normalizedNetValue),
+                      commissionTermMonths: parseOptionalInt(normalizedTermMonths),
+                      commissionInterestRate: parseOptionalNumber(normalizedInterestRate),
+                      commissionAgency: normalizedAgency,
+                      commissionContractType: normalizedContractType,
+                      commissionPdv: normalizedPdv,
+                    }
+                  : entry,
+              ),
+            };
+          });
+          setCommissionDrafts((current) => ({
+            ...current,
+            [gainOpportunityId]: {
+              ...(current[gainOpportunityId] ?? {
+                manualMargin: "",
+                contractValue: "",
+                netValue: "",
+                termMonths: "",
+                interestRate: "",
+                agency: "",
+                contractType: "",
+                pdv: "",
+                assignedUserId: "",
+                commissionStatus: "pendente" as const,
+                notes: "",
+              }),
+              contractValue: normalizedContractValue,
+              netValue: normalizedNetValue,
+              termMonths: normalizedTermMonths,
+              interestRate: normalizedInterestRate,
+              agency: normalizedAgency,
+              contractType: normalizedContractType,
+              pdv: normalizedPdv,
+            },
+          }));
+        } catch (error) {
+          setMessage(extractApiMessage(error, "Card atualizado, mas não foi possível sincronizar em Comissões."));
+          setIsSummaryEditing(false);
+          return;
+        }
+      }
       setIsSummaryEditing(false);
-      setMessage("Resumo do cliente atualizado.");
+      setMessage(gainOpportunityId ? "Dados manuais do card atualizados." : "Card atualizado. Sem card ganho para sincronizar em Comissões.");
     } catch {
-      setMessage("Não foi possível atualizar o resumo do cliente.");
+      setMessage("Não foi possível atualizar os dados manuais do card.");
     }
   };
   const onKanbanMouseDown = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -3142,61 +3462,23 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
     };
   };
 
-  const onSimularServidorAgora = async (id: number) => {
-    setSimulandoServidorId(id);
-    try {
-      const result = await simularServidorAgora(id);
-      setServidoresImportados((current) =>
-        current.map((item) =>
-          item.id === id
-            ? {
-                ...item,
-                valorMaximoLiberado: result.valorMaximoLiberado,
-                melhorParcela: result.melhorParcela,
-                melhorPrazo: result.melhorPrazo,
-                totalPago: result.totalPago,
-                produtoRecomendado: result.produtoRecomendado,
-                prioridadeAtendimento: result.prioridadeAtendimento,
-              }
-            : item,
-        ),
-      );
-      await loadServidoresData();
-      setSimulacoesRecentesIds((current) => (current.includes(id) ? current : [...current, id]));
-      window.setTimeout(() => {
-        setSimulacoesRecentesIds((current) => current.filter((itemId) => itemId !== id));
-      }, 5000);
-      setMessage("Simulação atualizada com sucesso.");
-    } catch (error) {
-      const responseMessage =
-        typeof error === "object" &&
-        error &&
-        "response" in error &&
-        typeof error.response === "object" &&
-        error.response &&
-        "data" in error.response &&
-        typeof error.response.data === "object" &&
-        error.response.data &&
-        "message" in error.response.data &&
-        typeof error.response.data.message === "string"
-          ? error.response.data.message
-          : null;
-      setMessage(responseMessage ?? "Falha ao simular servidor.");
-    } finally {
-      setSimulandoServidorId(null);
-    }
-  };
-
   const onCadastrarServidor = (servant: ImportedServant) => {
+    const cpfRelacionadoFormatado = formatCpf(servant.seconsigCpf ?? servant.cpfRelacionado ?? "");
     setEditingClientId(null);
     setClientForm({
       name: servant.name,
-      cpf: "",
+      cpf: cpfRelacionadoFormatado,
       phones: [""],
+      cep: "",
+      addressStreet: "",
+      addressNumber: "",
+      addressComplement: "",
+      addressNeighborhood: "",
       city: servant.lotacao || "",
+      addressState: "",
       profession: "",
-      convenio: "INSS",
-      income: String(Number(servant.valorLiquido || 0)),
+      convenio: "",
+      income: "0",
       heatBadge: null,
       source: `portal_transparencia:${servant.unidadeGestora || "sergipe"}`,
       status: "novo",
@@ -3204,7 +3486,11 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       assignedUserName: user?.name ?? sellerOptions[0]?.name ?? "",
     });
     setIsClientModalOpen(true);
-    setMessage("Complete CPF e telefones para concluir o cadastro do cliente.");
+    setMessage(
+      cpfRelacionadoFormatado
+        ? "CPF preenchido automaticamente. Confira os dados e complete os telefones."
+        : "Complete CPF e telefones para concluir o cadastro do cliente.",
+    );
   };
 
   const onToggleCadastroSort = (sortBy: CadastroSortBy) => {
@@ -3320,6 +3606,67 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       total: filteredFunnelOutcomeReportItems.length,
     };
   }, [filteredFunnelOutcomeReportItems]);
+
+  const filteredCommissionItems = useMemo(() => {
+    const ganhoItems = (funnelOutcomeReport?.items ?? []).filter(
+      (item) => item.status === "ganho" && item.currentClientStatus === "ganho",
+    );
+    const latestByClient = new Map<number, (typeof ganhoItems)[number]>();
+    for (const item of ganhoItems) {
+      const current = latestByClient.get(item.id);
+      if (!current) {
+        latestByClient.set(item.id, item);
+        continue;
+      }
+      const currentTime = new Date(current.updatedAt).getTime();
+      const nextTime = new Date(item.updatedAt).getTime();
+      if (nextTime >= currentTime) {
+        latestByClient.set(item.id, item);
+      }
+    }
+    const items = Array.from(latestByClient.values());
+    const busca = comissaoFiltro.busca.trim().toLowerCase();
+    const buscaCpfDigits = comissaoFiltro.busca.replace(/\D/g, "");
+    const statusFilter = comissaoFiltro.commissionStatus;
+    return items.filter((item) => {
+      if (!isAdmin && Number(item.assignedUserId ?? 0) !== Number(user?.id ?? 0)) return false;
+      if (comissaoFiltro.vendedorId && String(item.assignedUserId ?? "") !== comissaoFiltro.vendedorId) return false;
+      if (statusFilter && item.commissionStatus !== statusFilter) return false;
+      const itemName = (item.name ?? "").toLowerCase();
+      const itemCpf = (item.cpf ?? "").toLowerCase();
+      const itemCpfDigits = item.cpf.replace(/\D/g, "");
+      return (
+        !busca ||
+        itemName.includes(busca) ||
+        itemCpf.includes(busca) ||
+        (buscaCpfDigits.length > 0 && itemCpfDigits.includes(buscaCpfDigits))
+      );
+    });
+  }, [funnelOutcomeReport, comissaoFiltro, isAdmin, user?.id]);
+
+  const commissionTotals = useMemo(() => {
+    const parseDraftNumber = (value: string): number => {
+      return parseLocaleNumber(value) ?? 0;
+    };
+    let pago = 0;
+    let pendente = 0;
+    let valorContratoTotal = 0;
+    let valorLiquidoTotal = 0;
+    for (const item of filteredCommissionItems) {
+      const draft = commissionDrafts[item.opportunityId] ?? buildCommissionDraft(item);
+      if (draft.commissionStatus === "pago") pago += 1;
+      else pendente += 1;
+      valorContratoTotal += parseDraftNumber(draft.contractValue);
+      valorLiquidoTotal += parseDraftNumber(draft.netValue);
+    }
+    return {
+      total: filteredCommissionItems.length,
+      pago,
+      pendente,
+      valorContratoTotal,
+      valorLiquidoTotal,
+    };
+  }, [filteredCommissionItems, commissionDrafts, summaryOverrides]);
 
   if (loading) return <p>Carregando CRM de empréstimos...</p>;
   const progressoImportacaoPercentual =
@@ -3511,10 +3858,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                   name: "",
                   cpf: "",
                   phones: [""],
+                  cep: "",
+                  addressStreet: "",
+                  addressNumber: "",
+                  addressComplement: "",
+                  addressNeighborhood: "",
                   city: "",
+                  addressState: "",
                   profession: "",
-                  convenio: "INSS",
-                  income: "",
+                  convenio: "",
+                  income: "0",
                   heatBadge: null,
                   source: "manual",
                   status: "novo",
@@ -4229,227 +4582,171 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             </div>
             <section className="loan-client-summary">
               <div className="section-header-row">
+                <h4>Dados do Cadastro</h4>
+              </div>
+              <div className="loan-client-summary-compact">
+                <p>
+                  <strong>Nome:</strong> {selectedClient.name || "-"} | <strong>CPF:</strong> {selectedClient.cpf || "-"} |{" "}
+                  <strong>Telefone:</strong> {formatPhonesDisplay(selectedClient.phones, "-")}
+                </p>
+                <p>
+                  <strong>Profissão:</strong> {selectedClient.profession || "-"} | <strong>Origem:</strong>{" "}
+                  {selectedClient.source || "-"}
+                </p>
+                <p>
+                  <strong>Endereço:</strong>{" "}
+                  {[
+                    selectedClient.addressStreet || "",
+                    selectedClient.addressNumber ? `, ${selectedClient.addressNumber}` : "",
+                    selectedClient.addressComplement ? ` - ${selectedClient.addressComplement}` : "",
+                    selectedClient.addressNeighborhood ? ` - ${selectedClient.addressNeighborhood}` : "",
+                    selectedClient.city ? ` - ${selectedClient.city}` : "",
+                    selectedClient.addressState ? `/${selectedClient.addressState}` : "",
+                    selectedClient.cep ? ` - CEP ${selectedClient.cep}` : "",
+                  ]
+                    .join("")
+                    .trim() || "-"}
+                </p>
+              </div>
+            </section>
+            <section className="loan-client-summary">
+              <div className="section-header-row">
                 <div className="section-title-with-action">
-                  <h4>Resumo do Cliente</h4>
+                  <h4>Dados do Contrato</h4>
                   <button
                     type="button"
                     className="transaction-icon-button"
                     onClick={() => setIsSummaryEditing((current) => !current)}
-                    title={isSummaryEditing ? "Fechar edição" : "Editar resumo"}
-                    aria-label={isSummaryEditing ? "Fechar edição" : "Editar resumo"}
+                    title={isSummaryEditing ? "Fechar edição" : "Editar dados"}
+                    aria-label={isSummaryEditing ? "Fechar edição" : "Editar dados"}
                   >
                     <PencilIcon />
                   </button>
                 </div>
               </div>
-              {isSummaryEditing ? (
-                <>
-                  <div className="loan-client-summary-form">
-                    <label>
-                      Nome
-                      <input
-                        value={clientSummaryForm.name}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, name: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      CPF
-                      <input
-                        value={clientSummaryForm.cpf}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, cpf: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Cidade
-                      <input
-                        value={clientSummaryForm.city}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, city: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Profissão
-                      <input
-                        value={clientSummaryForm.profession}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, profession: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Convênio
-                      <input
-                        value={clientSummaryForm.convenio}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, convenio: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Renda
-                      <input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={clientSummaryForm.income}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, income: event.target.value }))
-                        }
-                      />
-                    </label>
-                    <label>
-                      Origem
-                      <select
-                        value={clientSummaryForm.source}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, source: event.target.value }))
-                        }
-                      >
-                        {!sourceOptions.includes(clientSummaryForm.source) && clientSummaryForm.source ? (
-                          <option value={clientSummaryForm.source}>{clientSummaryForm.source}</option>
-                        ) : null}
-                        {sourceOptions.map((source) => (
-                          <option key={`summary-source-${source}`} value={source}>
-                            {source}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      Telefones (separados por vírgula)
-                      <input
-                        value={clientSummaryForm.phones}
-                        onChange={(event) =>
-                          setClientSummaryForm((prev) => ({ ...prev, phones: event.target.value }))
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="row">
-                    <button type="button" className="primary-button" onClick={() => void onSaveClientSummary()}>
-                      Salvar resumo
-                    </button>
-                  </div>
-                </>
-              ) : null}
-              <div className="loan-client-summary-grid">
-                <article>
-                  <strong>Status</strong>
-                  {isSummaryEditing ? (
-                    <select
-                      value={clientSummaryForm.status}
-                      onChange={(event) =>
-                        setClientSummaryForm((prev) => ({
-                          ...prev,
-                          status: (event.target.value || "novo") as LoanClientStatus,
-                        }))
-                      }
-                    >
-                      {statusFlow.map((status) => (
-                        <option key={`summary-status-${status.key}`} value={status.key}>
-                          {status.label}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span>{statusFlow.find((item) => item.key === selectedClient.status)?.label ?? selectedClient.status}</span>
-                  )}
-                </article>
-                <article>
-                  <strong>Margem disponivel</strong>
-                  {isSummaryEditing ? (
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={clientSummaryForm.marginAvailable}
-                      onChange={(event) =>
-                        setClientSummaryForm((prev) => ({ ...prev, marginAvailable: event.target.value }))
-                      }
-                    />
-                  ) : (
-                    <span>
-                      {getMargemDisponivel(selectedClient).toLocaleString("pt-BR", {
-                        style: "currency",
-                        currency: "BRL",
-                      })}
-                    </span>
-                  )}
-                </article>
-                <article>
-                  <strong>SIMULACAO</strong>
-                  {isSummaryEditing ? (
-                    <input
-                      value={clientSummaryForm.simulation}
-                      onChange={(event) =>
-                        setClientSummaryForm((prev) => ({ ...prev, simulation: event.target.value }))
-                      }
-                    />
-                  ) : (
-                    <span>
-                      {selectedClientSummaryOverride?.simulation ||
-                        (getClientQuickSimulation(selectedClient)
-                          ? `${getClientQuickSimulation(selectedClient)!.installments}x de ${getClientQuickSimulation(
-                              selectedClient,
-                            )!.installmentValue.toLocaleString("pt-BR", {
-                              style: "currency",
-                              currency: "BRL",
-                            })}`
-                          : "Sem simulação")}
-                    </span>
-                  )}
-                </article>
-                <article>
-                  <strong>PRODUTO RECOMENDADO</strong>
-                  {isSummaryEditing ? (
-                    <input
-                      value={clientSummaryForm.product}
-                      onChange={(event) =>
-                        setClientSummaryForm((prev) => ({ ...prev, product: event.target.value }))
-                      }
-                    />
-                  ) : (
-                    <span>{selectedClientSummaryOverride?.product || getRecommendedProduct(selectedClient)}</span>
-                  )}
-                </article>
-                <article>
-                  <strong>Nome</strong>
-                  <span>{selectedClient.name || "-"}</span>
-                </article>
-                <article>
-                  <strong>CPF</strong>
-                  <span>{selectedClient.cpf || "-"}</span>
-                </article>
-                <article>
-                  <strong>Cidade</strong>
-                  <span>{selectedClient.city || "-"}</span>
-                </article>
-                <article>
-                  <strong>Profissão</strong>
-                  <span>{selectedClient.profession || "-"}</span>
-                </article>
-                <article>
-                  <strong>Convênio</strong>
-                  <span>{selectedClient.convenio || "-"}</span>
-                </article>
-                <article>
-                  <strong>Renda</strong>
-                  <span>{formatCurrency(Number(selectedClient.income || 0))}</span>
-                </article>
-                <article>
-                  <strong>Origem</strong>
-                  <span>{selectedClient.source || "-"}</span>
-                </article>
-                <article>
-                  <strong>Telefones</strong>
-                  <span>{formatPhonesDisplay(selectedClient.phones, "-")}</span>
-                </article>
+              <div className="loan-client-summary-form">
+                <label>
+                  VALOR CONTRATO
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={clientSummaryForm.contractValue}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({
+                        ...prev,
+                        contractValue: formatCurrencyInput(event.target.value),
+                      }))
+                    }
+                    placeholder="R$ 0,00"
+                  />
+                </label>
+                <label>
+                  VALOR LIQUIDO
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={clientSummaryForm.netValue}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({
+                        ...prev,
+                        netValue: formatCurrencyInput(event.target.value),
+                      }))
+                    }
+                    placeholder="R$ 0,00"
+                  />
+                </label>
+                <label>
+                  PRAZO
+                  <input
+                    type="number"
+                    min={1}
+                    step="1"
+                    value={clientSummaryForm.termMonths}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({ ...prev, termMonths: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  TAXA DE JUROS
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={clientSummaryForm.interestRate}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({ ...prev, interestRate: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  AGÊNCIA
+                  <input
+                    value={clientSummaryForm.agency}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({ ...prev, agency: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  CONVÊNIO
+                  <input
+                    value={clientSummaryForm.convenio}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({ ...prev, convenio: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  TIPO DE CONTRATO
+                  <input
+                    value={clientSummaryForm.contractType}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({ ...prev, contractType: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  PDV
+                  <input
+                    value={clientSummaryForm.pdv}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({ ...prev, pdv: event.target.value }))
+                    }
+                  />
+                </label>
+                <label>
+                  SEGURO
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={clientSummaryForm.seguro}
+                    disabled={!isSummaryEditing}
+                    onChange={(event) =>
+                      setClientSummaryForm((prev) => ({
+                        ...prev,
+                        seguro: formatCurrencyInput(event.target.value),
+                      }))
+                    }
+                    placeholder="R$ 0,00"
+                  />
+                </label>
               </div>
+              {isSummaryEditing ? (
+                <div className="row">
+                  <button type="button" className="primary-button" onClick={() => void onSaveClientSummary()}>
+                    Salvar
+                  </button>
+                </div>
+              ) : null}
             </section>
             <div className="loan-history">
               <div className="section-header-row">
@@ -5152,24 +5449,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
       <section className="card">
         <div className="section-header-row">
           <h3>Servidores importados</h3>
-          <div className="row">
-            <button
-              type="button"
-              className={servidoresFiltro.prioridadeAtendimento === "Alta" ? "primary-button" : ""}
-              onClick={() => {
-                setServidoresFiltro((prev) => ({
-                  ...prev,
-                  prioridadeAtendimento: prev.prioridadeAtendimento === "Alta" ? "" : "Alta",
-                }));
-                setServidoresPaginacao((prev) => ({ ...prev, page: 1 }));
-              }}
-            >
-              {servidoresFiltro.prioridadeAtendimento === "Alta"
-                ? `Mostrando Alta prioridade (${servidoresPaginacao.total})`
-                : "Somente Alta prioridade"}
-            </button>
-            <span className="loan-hint">Classificação comercial (não exclui ninguém)</span>
-          </div>
         </div>
         {servidoresImportJob && servidoresImportJob.status === "running" ? (
           <div className="import-progress-wrap">
@@ -5295,65 +5574,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             }}
           />
           <select
-            value={servidoresFiltro.classificacao}
-            onChange={(event) => {
-              setServidoresFiltro((prev) => ({
-                ...prev,
-                classificacao: event.target.value,
-              }));
-              setServidoresPaginacao((prev) => ({ ...prev, page: 1 }));
-            }}
-          >
-            <option value="">Todas classificações</option>
-            <option value="Com consignado">Com consignado</option>
-            <option value="Sem consignado">Sem consignado</option>
-          </select>
-          <select
-            value={servidoresFiltro.classificacaoMargem}
-            onChange={(event) => {
-              setServidoresFiltro((prev) => ({
-                ...prev,
-                classificacaoMargem: event.target.value,
-              }));
-              setServidoresPaginacao((prev) => ({ ...prev, page: 1 }));
-            }}
-          >
-            <option value="">Toda margem</option>
-            <option value="Alta">Margem alta</option>
-            <option value="Media">Margem media</option>
-            <option value="Baixa">Margem baixa</option>
-          </select>
-          <select
-            value={servidoresFiltro.classificacaoScore}
-            onChange={(event) => {
-              setServidoresFiltro((prev) => ({
-                ...prev,
-                classificacaoScore: event.target.value,
-              }));
-              setServidoresPaginacao((prev) => ({ ...prev, page: 1 }));
-            }}
-          >
-            <option value="">Todo score</option>
-            <option value="Quente">Quente</option>
-            <option value="Morno">Morno</option>
-            <option value="Frio">Frio</option>
-          </select>
-          <select
-            value={servidoresFiltro.prioridadeAtendimento}
-            onChange={(event) => {
-              setServidoresFiltro((prev) => ({
-                ...prev,
-                prioridadeAtendimento: event.target.value,
-              }));
-              setServidoresPaginacao((prev) => ({ ...prev, page: 1 }));
-            }}
-          >
-            <option value="">Toda prioridade</option>
-            <option value="Alta">🔥 Alta</option>
-            <option value="Media">🟡 Media</option>
-            <option value="Baixa">❄ Baixa</option>
-          </select>
-          <select
             value={String(servidoresPaginacao.pageSize)}
             onChange={(event) =>
               setServidoresPaginacao((prev) => ({
@@ -5393,29 +5613,22 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
             <tr>
               <th>Ações</th>
               <th>Nome</th>
-              <th>Liberado</th>
-              <th>Parcela</th>
-              <th>Prazo</th>
-              <th>Produto</th>
-              <th>Prioridade</th>
+              <th>CPF</th>
+              <th>Margem atual R$</th>
+              <th>Status</th>
               <th>Cadastrar</th>
             </tr>
           </thead>
           <tbody>
             {servidoresImportados.length === 0 ? (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={6}>
                   {servidoresLoading ? "Carregando servidores..." : "Nenhum servidor encontrado para o filtro."}
                 </td>
               </tr>
             ) : (
               servidoresImportados.map((item) => {
                 const expandido = servidoresExpandidos.includes(item.id);
-                const itemRawSearch = rawFieldsSearch[item.id] ?? { lista: "", detalhe: "" };
-                const rawListFields = sortRawFields(collectRawFields(item.rawListPayload));
-                const rawDetailFields = sortRawFields(collectRawFields(item.rawDetailPayload));
-                const filteredRawListFields = filterRawFields(rawListFields, itemRawSearch.lista);
-                const filteredRawDetailFields = filterRawFields(rawDetailFields, itemRawSearch.detalhe);
                 return (
                   <Fragment key={item.id}>
                     <tr>
@@ -5424,27 +5637,16 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                           <button type="button" onClick={() => toggleServidorDetalhes(item.id)}>
                             {expandido ? "-" : "+"}
                           </button>
-                          <button
-                            type="button"
-                            className="primary-button"
-                            onClick={() => void onSimularServidorAgora(item.id)}
-                            disabled={simulandoServidorId === item.id}
-                          >
-                            {simulandoServidorId === item.id ? "Simulando..." : "Simular agora"}
-                          </button>
-                          {simulacoesRecentesIds.includes(item.id) ? (
-                            <span className="simulacao-ok-badge" title="Simulado agora" aria-label="Simulado agora">
-                              ✓
-                            </span>
-                          ) : null}
                         </div>
                       </td>
                       <td>{item.name}</td>
-                      <td>{formatCurrency(item.valorMaximoLiberado)}</td>
-                      <td>{formatCurrency(item.melhorParcela)}</td>
-                      <td>{item.melhorPrazo}x</td>
-                      <td>{item.produtoRecomendado || "-"}</td>
-                      <td>{prioridadeBadge(item.prioridadeAtendimento)}</td>
+                      <td>{item.seconsigCpf ? formatCpf(item.seconsigCpf) : "-"}</td>
+                      <td>
+                        {item.seconsigMargemAtual !== undefined && item.seconsigMargemAtual !== null
+                          ? formatCurrency(Number(item.seconsigMargemAtual))
+                          : "-"}
+                      </td>
+                      <td>{item.seconsigStatus || "-"}</td>
                       <td>
                         <button type="button" onClick={() => onCadastrarServidor(item)}>
                           Cadastrar
@@ -5453,27 +5655,55 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                     </tr>
                     {expandido ? (
                       <tr className="details-row">
-                        <td colSpan={8}>
-                          <div className="details-grid">
-                            <div className="detail-item">
-                              <strong>Score e prioridade</strong>
-                              <span className="score-prioridade-inline">
-                                <span>{item.score}</span>
-                                <span
-                                  className={`loan-heat-badge-chip ${getImportedScoreHeatClassName(item.classificacaoScore)}`}
-                                >
-                                  {item.classificacaoScore}
-                                </span>
-                                <span>{prioridadeBadge(item.prioridadeAtendimento)}</span>
-                              </span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Produto recomendado</strong>
-                              <span>{item.produtoRecomendado || "-"}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Motivo da recomendacao</strong>
-                              <span>{item.motivoRecomendacao || "-"}</span>
+                        <td colSpan={6}>
+                          <div className="details-grid details-grid-importados">
+                            <div className="detail-item detail-item-rubricas">
+                              <strong>Rubricas</strong>
+                              {item.rubricas && item.rubricas.length > 0 ? (
+                                <div className="rubricas-table-wrap">
+                                  <div className="rubricas-table-header">
+                                    <span>Rubrica</span>
+                                    <span>Tipo</span>
+                                    <span className="rubricas-value-col">Valor</span>
+                                  </div>
+                                  <div className="rubricas-table-body">
+                                    {item.rubricas.map((rubrica, index) => {
+                                      const tipoRaw = String(rubrica.tipo ?? "").trim().toLocaleLowerCase("pt-BR");
+                                      const tipo =
+                                        tipoRaw.includes("desc") || tipoRaw.includes("debit") || tipoRaw === "d"
+                                          ? "Desconto"
+                                          : "Receita";
+                                      return (
+                                        <div key={`${item.id}-${rubrica.nome}-${index}`} className="rubricas-table-row">
+                                          <span className="rubrica-name">{rubrica.nome || "-"}</span>
+                                          <span
+                                            className={
+                                              tipo === "Desconto"
+                                                ? "rubrica-type rubrica-type-desconto"
+                                                : "rubrica-type rubrica-type-receita"
+                                            }
+                                          >
+                                            {tipo}
+                                          </span>
+                                          <span className="rubrica-value">{formatCurrency(Math.abs(Number(rubrica.valor ?? 0)))}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="rubricas-summary">
+                                    <div className="rubricas-summary-row">
+                                      <span>Valor bruto</span>
+                                      <strong>{formatCurrency(Number(item.valorBruto ?? 0))}</strong>
+                                    </div>
+                                    <div className="rubricas-summary-row rubricas-summary-row-highlight">
+                                      <span>Valor líquido</span>
+                                      <strong>{formatCurrency(Number(item.valorLiquido ?? 0))}</strong>
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span>-</span>
+                              )}
                             </div>
                             <div className="detail-item">
                               <strong>Regime de contratacao</strong>
@@ -5496,141 +5726,34 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                               <span>{item.unidadeGestora || "-"}</span>
                             </div>
                             <div className="detail-item">
-                              <strong>ID externo (vínculo)</strong>
+                              <strong>Matrícula</strong>
                               <span>{item.sourceExternalId || "-"}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>CPF</strong>
+                              <span>{item.seconsigCpf ? formatCpf(item.seconsigCpf) : "-"}</span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Margem atual R$</strong>
+                              <span>
+                                {item.seconsigMargemAtual !== undefined && item.seconsigMargemAtual !== null
+                                  ? formatCurrency(Number(item.seconsigMargemAtual))
+                                  : "-"}
+                              </span>
+                            </div>
+                            <div className="detail-item">
+                              <strong>Status</strong>
+                              <span>{item.seconsigStatus || "-"}</span>
                             </div>
                             <div className="detail-item">
                               <strong>Admissao</strong>
                               <span>{item.dataAdmissao || "-"}</span>
                             </div>
                             <div className="detail-item">
-                              <strong>Valor bruto (registro)</strong>
-                              <span>{formatCurrency(Number(item.valorBruto ?? 0))}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Valor líquido (registro)</strong>
-                              <span>{formatCurrency(Number(item.valorLiquido ?? 0))}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Margem maxima</strong>
-                              <span>{formatCurrency(item.margemMaxima)}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Margem utilizada</strong>
-                              <span>{formatCurrency(item.margemUtilizada)}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Salário bruto total</strong>
-                              <span>{formatCurrency(Number(item.salarioBrutoTotalPeriodo ?? item.valorBruto ?? 0))}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Salário líquido total</strong>
-                              <span>{formatCurrency(Number(item.salarioLiquidoTotalPeriodo ?? item.valorLiquido ?? 0))}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Margem disponivel</strong>
-                              <span>{formatCurrency(item.margemDisponivel)}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Classificação de margem</strong>
-                              <span>{item.classificacaoMargem}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Total pago</strong>
-                              <span>{formatCurrency(item.totalPago)}</span>
-                            </div>
-                            <div className="detail-item">
-                              <strong>Classificação consignado</strong>
-                              <span>{item.classificacaoConsignado}</span>
-                            </div>
-                            <div className="detail-item">
                               <strong>Periodo de folha</strong>
                               <span>
                                 {String(item.mes).padStart(2, "0")}/{item.ano}
                               </span>
-                            </div>
-                            <div className="detail-item detail-item-rubricas">
-                              <strong>Rubricas</strong>
-                              {item.rubricas && item.rubricas.length > 0 ? (
-                                <div className="rubricas-list">
-                                  {item.rubricas.slice(0, 12).map((rubrica, index) => (
-                                    <div key={`${item.id}-${rubrica.nome}-${index}`} className="rubrica-item">
-                                      <span className="rubrica-name">{rubrica.nome}</span>
-                                      <span className="rubrica-value">{formatCurrency(rubrica.valor)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <span>-</span>
-                              )}
-                            </div>
-                            <div className="detail-item detail-item-raw">
-                              <strong>Payload bruto (lista)</strong>
-                              <pre className="raw-json-block">{formatRawJson(item.rawListPayload)}</pre>
-                            </div>
-                            <div className="detail-item detail-item-raw">
-                              <strong>Payload bruto (detalhe)</strong>
-                              <pre className="raw-json-block">{formatRawJson(item.rawDetailPayload)}</pre>
-                            </div>
-                            <div className="detail-item detail-item-raw">
-                              <strong>Todos os campos (lista)</strong>
-                              <input
-                                type="text"
-                                className="raw-fields-search-input"
-                                placeholder="Buscar campo/valor no payload de lista..."
-                                value={itemRawSearch.lista}
-                                onChange={(event) =>
-                                  setRawFieldsSearch((current) => ({
-                                    ...current,
-                                    [item.id]: {
-                                      lista: event.target.value,
-                                      detalhe: current[item.id]?.detalhe ?? "",
-                                    },
-                                  }))
-                                }
-                              />
-                              <div className="raw-fields-list">
-                                {filteredRawListFields.length === 0 ? (
-                                  <div className="raw-fields-empty">Nenhum campo encontrado para este filtro.</div>
-                                ) : (
-                                  filteredRawListFields.map((field) => (
-                                  <div className="raw-field-row" key={`raw-list-${item.id}-${field.path}`}>
-                                    <code className="raw-field-path">{field.path}</code>
-                                    <span className="raw-field-value">{field.value}</span>
-                                  </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                            <div className="detail-item detail-item-raw">
-                              <strong>Todos os campos (detalhe)</strong>
-                              <input
-                                type="text"
-                                className="raw-fields-search-input"
-                                placeholder="Buscar campo/valor no payload de detalhe..."
-                                value={itemRawSearch.detalhe}
-                                onChange={(event) =>
-                                  setRawFieldsSearch((current) => ({
-                                    ...current,
-                                    [item.id]: {
-                                      lista: current[item.id]?.lista ?? "",
-                                      detalhe: event.target.value,
-                                    },
-                                  }))
-                                }
-                              />
-                              <div className="raw-fields-list">
-                                {filteredRawDetailFields.length === 0 ? (
-                                  <div className="raw-fields-empty">Nenhum campo encontrado para este filtro.</div>
-                                ) : (
-                                  filteredRawDetailFields.map((field) => (
-                                  <div className="raw-field-row" key={`raw-detail-${item.id}-${field.path}`}>
-                                    <code className="raw-field-path">{field.path}</code>
-                                    <span className="raw-field-value">{field.value}</span>
-                                  </div>
-                                  ))
-                                )}
-                              </div>
                             </div>
                           </div>
                         </td>
@@ -6065,10 +6188,61 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                 </div>
               </label>
               <label>
+                CEP
+                <input
+                  value={clientForm.cep}
+                  onChange={(event) => setClientForm((prev) => ({ ...prev, cep: formatCep(event.target.value) }))}
+                  placeholder="00000-000"
+                />
+                {isLoadingCep ? <small>Buscando CEP...</small> : null}
+                {!isLoadingCep && cepLookupMessage ? <small>{cepLookupMessage}</small> : null}
+              </label>
+              <label>
+                Endereço
+                <input
+                  value={clientForm.addressStreet}
+                  onChange={(event) => setClientForm((prev) => ({ ...prev, addressStreet: event.target.value }))}
+                />
+              </label>
+              <label>
+                Número
+                <input
+                  value={clientForm.addressNumber}
+                  onChange={(event) => setClientForm((prev) => ({ ...prev, addressNumber: event.target.value }))}
+                />
+              </label>
+              <label>
+                Complemento
+                <input
+                  value={clientForm.addressComplement}
+                  onChange={(event) => setClientForm((prev) => ({ ...prev, addressComplement: event.target.value }))}
+                />
+              </label>
+              <label>
+                Bairro
+                <input
+                  value={clientForm.addressNeighborhood}
+                  onChange={(event) =>
+                    setClientForm((prev) => ({ ...prev, addressNeighborhood: event.target.value }))
+                  }
+                />
+              </label>
+              <label>
                 Cidade
                 <input
                   value={clientForm.city}
                   onChange={(event) => setClientForm((prev) => ({ ...prev, city: event.target.value }))}
+                />
+              </label>
+              <label>
+                UF
+                <input
+                  value={clientForm.addressState}
+                  onChange={(event) =>
+                    setClientForm((prev) => ({ ...prev, addressState: event.target.value.toUpperCase().slice(0, 2) }))
+                  }
+                  placeholder="UF"
+                  maxLength={2}
                 />
               </label>
               <label>
@@ -6077,48 +6251,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                   value={clientForm.profession}
                   onChange={(event) => setClientForm((prev) => ({ ...prev, profession: event.target.value }))}
                 />
-              </label>
-              <label>
-                Renda
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={clientForm.income}
-                  onChange={(event) => setClientForm((prev) => ({ ...prev, income: event.target.value }))}
-                />
-              </label>
-              <label>
-                Vendedor
-                <div className="lead-source-row">
-                  <select
-                    value={String(clientForm.assignedUserId || "")}
-                    onChange={(event) => {
-                      const sellerId = Number(event.target.value || 0);
-                      const seller = sellerOptions.find((item) => item.id === sellerId);
-                      setClientForm((prev) => ({
-                        ...prev,
-                        assignedUserId: sellerId,
-                        assignedUserName: seller?.name ?? prev.assignedUserName,
-                      }));
-                    }}
-                    required
-                  >
-                    {sellerOptions.map((seller) => (
-                      <option key={seller.id} value={String(seller.id)}>
-                        {seller.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    className="lead-source-add-button"
-                    title="Selecionar vendedor"
-                    onClick={() => setIsSellerModalOpen(true)}
-                  >
-                    ...
-                  </button>
-                </div>
               </label>
               <label>
                 Origem do lead
@@ -6135,24 +6267,6 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
                     ))}
                   </select>
                   <button type="button" className="lead-source-add-button" onClick={onAddLeadSourceOption}>
-                    +
-                  </button>
-                </div>
-              </label>
-              <label>
-                Convênio
-                <div className="lead-source-row">
-                  <select
-                    value={clientForm.convenio}
-                    onChange={(event) => setClientForm((prev) => ({ ...prev, convenio: event.target.value }))}
-                  >
-                    {convenioOptions.map((convenio) => (
-                      <option key={convenio} value={convenio}>
-                        {convenio}
-                      </option>
-                    ))}
-                  </select>
-                  <button type="button" className="lead-source-add-button" onClick={onAddConvenioOption}>
                     +
                   </button>
                 </div>
@@ -6463,8 +6577,228 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               <MenuComissaoIcon />
               <span>Comissões</span>
             </h3>
+            <div className="loan-report-actions">
+              <label className="loan-report-month-filter">
+                Competência
+                <select
+                  value={comissaoFiltro.monthRef}
+                  onChange={(event) =>
+                    setComissaoFiltro((prev) => ({ ...prev, monthRef: event.target.value }))
+                  }
+                >
+                  {monthFilterOptions.map((item) => (
+                    <option key={`comissao-month-${item.value || "all"}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => void loadFunnelOutcomeReportData()}
+                disabled={funnelOutcomeReportLoading}
+              >
+                {funnelOutcomeReportLoading ? "Atualizando..." : "Atualizar"}
+              </button>
+            </div>
           </div>
-          <p className="section-subtitle">Módulo reservado para implementação futura.</p>
+          <p className="section-subtitle">
+            Cards ganhos entram automaticamente aqui para controle de comissionamento.
+          </p>
+          <div className="loan-metrics loan-report-metrics">
+            <article>
+              <strong>{commissionTotals.total}</strong>
+              <span>Ganhos no período</span>
+            </article>
+            <article>
+              <strong>{commissionTotals.pendente}</strong>
+              <span>Pendentes</span>
+            </article>
+            <article>
+              <strong>{commissionTotals.pago}</strong>
+              <span>Pagos</span>
+            </article>
+            <article>
+              <strong>{formatCurrency(commissionTotals.valorContratoTotal)}</strong>
+              <span>Contrato total</span>
+            </article>
+            <article>
+              <strong>{formatCurrency(commissionTotals.valorLiquidoTotal)}</strong>
+              <span>Líquido total</span>
+            </article>
+          </div>
+          <div className="loan-report-filters">
+            <input
+              placeholder="Buscar cliente (nome ou CPF)"
+              value={comissaoFiltro.busca}
+              onChange={(event) =>
+                setComissaoFiltro((prev) => ({ ...prev, busca: event.target.value }))
+              }
+            />
+            <select
+              value={comissaoFiltro.vendedorId}
+              onChange={(event) =>
+                setComissaoFiltro((prev) => ({ ...prev, vendedorId: event.target.value }))
+              }
+            >
+              <option value="">Todos os vendedores</option>
+              {sellerOptions.map((seller) => (
+                <option key={`comissao-seller-${seller.id}`} value={String(seller.id)}>
+                  {seller.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={comissaoFiltro.commissionStatus}
+              onChange={(event) =>
+                setComissaoFiltro((prev) => ({
+                  ...prev,
+                  commissionStatus: event.target.value as "" | "pendente" | "pago",
+                }))
+              }
+            >
+              <option value="">Status da comissão (todos)</option>
+              <option value="pendente">Pendente</option>
+              <option value="pago">Pago</option>
+            </select>
+            <button
+              className="loan-filter-clear-button"
+              type="button"
+              onClick={() =>
+                setComissaoFiltro((prev) => ({
+                  monthRef: prev.monthRef,
+                  busca: "",
+                  vendedorId: "",
+                  commissionStatus: "",
+                }))
+              }
+            >
+              Limpar filtros
+            </button>
+          </div>
+          <div className="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>CPF</th>
+                  <th>Vendedor(a)</th>
+                  <th>Valor contrato</th>
+                  <th>Valor líquido</th>
+                  <th>Prazo</th>
+                  <th>Taxa de juros</th>
+                  <th>Agência</th>
+                  <th>Tipo contrato</th>
+                  <th>PDV</th>
+                  <th>Status comissão</th>
+                  <th>Observações</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCommissionItems.map((item) => {
+                  const draft = commissionDrafts[item.opportunityId] ?? buildCommissionDraft(item);
+                  const formatDraftMoney = (value: string): string => {
+                    const parsed = parseLocaleNumber(value);
+                    return parsed === null ? "-" : formatCurrency(parsed);
+                  };
+                  const formatDraftText = (value: string): string => {
+                    const normalized = value.trim();
+                    return normalized || "-";
+                  };
+                  return (
+                    <tr key={`comissao-row-${item.opportunityId}`}>
+                      <td>{item.name}</td>
+                      <td>{item.cpf}</td>
+                      <td>
+                        {isAdmin ? (
+                          <select
+                            value={draft.assignedUserId}
+                            onChange={(event) =>
+                              setCommissionDrafts((current) => ({
+                                ...current,
+                                [item.opportunityId]: { ...draft, assignedUserId: event.target.value },
+                              }))
+                            }
+                          >
+                            <option value="">Selecione</option>
+                            {sellerOptions.map((seller) => (
+                              <option key={`comissao-row-seller-${item.opportunityId}-${seller.id}`} value={String(seller.id)}>
+                                {seller.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          item.assignedUserName || "-"
+                        )}
+                      </td>
+                      <td>{formatDraftMoney(draft.contractValue)}</td>
+                      <td>{formatDraftMoney(draft.netValue)}</td>
+                      <td>{formatDraftText(draft.termMonths)}</td>
+                      <td>{formatDraftText(draft.interestRate)}</td>
+                      <td>{formatDraftText(draft.agency)}</td>
+                      <td>{formatDraftText(draft.contractType)}</td>
+                      <td>{formatDraftText(draft.pdv)}</td>
+                      <td>
+                        <select
+                          value={draft.commissionStatus}
+                          onChange={(event) =>
+                            setCommissionDrafts((current) => ({
+                              ...current,
+                              [item.opportunityId]: {
+                                ...draft,
+                                commissionStatus: event.target.value as "pendente" | "pago",
+                              },
+                            }))
+                          }
+                        >
+                          <option value="pendente">Pendente</option>
+                          <option value="pago">Pago</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          value={draft.notes}
+                          onChange={(event) =>
+                            setCommissionDrafts((current) => ({
+                              ...current,
+                              [item.opportunityId]: { ...draft, notes: event.target.value },
+                            }))
+                          }
+                        />
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="primary-button"
+                          disabled={updatingCommissionOpportunityId === item.opportunityId}
+                          onClick={() => void onSaveCommissionData(item)}
+                        >
+                          {updatingCommissionOpportunityId === item.opportunityId ? "Salvando..." : "Salvar"}
+                        </button>
+                        {isAdmin ? (
+                          <button
+                            type="button"
+                            className="danger-button"
+                            disabled={updatingCommissionOpportunityId === item.opportunityId}
+                            onClick={() => void onAdminExcluirGanho(item)}
+                          >
+                            Excluir
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredCommissionItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={14}>Nenhum card ganho encontrado para os filtros selecionados.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </section>
       ) : null}
 
@@ -6635,7 +6969,7 @@ export function EmprestimosPage(props: { sectionVisibility?: NegocialSectionVisi
               </thead>
               <tbody>
                 {filteredFunnelOutcomeReportItems.map((item) => (
-                  <tr key={`funnel-report-${item.id}`}>
+                  <tr key={`funnel-report-${item.opportunityId}`}>
                     <td>{item.status === "ganho" ? "Ganho" : "Perdido"}</td>
                     <td>{item.name}</td>
                     <td>{item.cpf}</td>

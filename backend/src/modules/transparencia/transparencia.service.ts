@@ -450,7 +450,12 @@ export async function ensureTransparenciaStructures(): Promise<void> {
       ADD COLUMN IF NOT EXISTS total_pago NUMERIC(14,2) NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS produto_recomendado TEXT NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS motivo_recomendacao TEXT NOT NULL DEFAULT '',
-      ADD COLUMN IF NOT EXISTS prioridade_atendimento TEXT NOT NULL DEFAULT 'Media'`,
+      ADD COLUMN IF NOT EXISTS prioridade_atendimento TEXT NOT NULL DEFAULT 'Media',
+      ADD COLUMN IF NOT EXISTS seconsig_cpf TEXT,
+      ADD COLUMN IF NOT EXISTS seconsig_margem_atual NUMERIC(14,2),
+      ADD COLUMN IF NOT EXISTS seconsig_status TEXT,
+      ADD COLUMN IF NOT EXISTS seconsig_payload JSONB,
+      ADD COLUMN IF NOT EXISTS seconsig_updated_at TIMESTAMPTZ`,
   );
   structureEnsured = true;
 }
@@ -904,4 +909,50 @@ export async function simularServidorImportado(params: {
     produtoRecomendado: recomendacao.produtoRecomendado,
     prioridadeAtendimento: recomendacao.prioridade,
   };
+}
+
+export async function aplicarSeconsigSyncTeste(params: {
+  actorUserId: number;
+  items: Array<{
+    servidorId: number;
+    nomeEncontrado?: string;
+    cpf?: string;
+    margemAtual?: number;
+    status?: string;
+    payload?: unknown;
+  }>;
+}): Promise<{
+  atualizados: number;
+  ignorados: number;
+}> {
+  await ensureTransparenciaStructures();
+  let atualizados = 0;
+  let ignorados = 0;
+
+  for (const item of params.items) {
+    const cpfLimpo = String(item.cpf ?? "").replace(/\D/g, "");
+    const margemAtual = Number(item.margemAtual ?? 0);
+    const status = String(item.status ?? "").trim() || null;
+    const payload = item.payload ?? null;
+    if (!item.servidorId || (!cpfLimpo && !Number.isFinite(margemAtual) && !status && !payload)) {
+      ignorados += 1;
+      continue;
+    }
+
+    const result = await pool.query(
+      `UPDATE loan_public_servants
+       SET
+        seconsig_cpf = CASE WHEN $1 = '' THEN seconsig_cpf ELSE $1 END,
+        seconsig_margem_atual = CASE WHEN $2::float8 <= 0 THEN seconsig_margem_atual ELSE $2 END,
+        seconsig_status = COALESCE($3, seconsig_status),
+        seconsig_payload = COALESCE($4::jsonb, seconsig_payload),
+        seconsig_updated_at = NOW()
+       WHERE id = $5`,
+      [cpfLimpo, margemAtual, status, payload ? JSON.stringify(payload) : null, item.servidorId],
+    );
+    if ((result.rowCount ?? 0) > 0) atualizados += 1;
+    else ignorados += 1;
+  }
+
+  return { atualizados, ignorados };
 }

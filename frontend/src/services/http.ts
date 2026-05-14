@@ -4,7 +4,13 @@ import { getAgentVpnStatus, setAgentVpnEnabled, type AgentVpnStatus } from "./vp
 const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
 const VPN_FEEDBACK_EVENT = "mc:vpn-feedback";
 const WRITE_METHODS = new Set(["post", "put", "patch", "delete"]);
-const VPN_SKIP_PATH_PREFIXES = ["/auth/login", "/auth/refresh", "/auth/logout"];
+const VPN_SKIP_PATH_PREFIXES = [
+  "/auth/login",
+  "/auth/refresh",
+  "/auth/logout",
+  "/api/servidores-importados/seconsig/test-run",
+  "/api/servidores-importados/seconsig/test-sync",
+];
 
 let ensureVpnOffPromise: Promise<void> | null = null;
 

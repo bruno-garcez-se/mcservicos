@@ -84,7 +84,13 @@ export type LoanClient = {
   id: number;
   name: string;
   cpf: string;
+  cep: string;
+  addressStreet: string;
+  addressNumber: string;
+  addressComplement: string;
+  addressNeighborhood: string;
   city: string;
+  addressState: string;
   profession: string;
   convenio: string;
   income: number;
@@ -193,6 +199,7 @@ export type LoanDashboard = {
 export type LoanFunnelOutcomeStatus = "ganho" | "perdido";
 
 export type LoanFunnelOutcomeReportItem = {
+  opportunityId: number;
   id: number;
   name: string;
   cpf: string;
@@ -203,11 +210,24 @@ export type LoanFunnelOutcomeReportItem = {
   income: number;
   source: string;
   status: LoanFunnelOutcomeStatus;
+  currentClientStatus: LoanClientStatus;
+  assignedUserId: number | null;
   assignedUserName: string | null;
   updatedAt: string;
   lastLossInteractionAt: string | null;
   lostReason: string | null;
   lostHasMargin: boolean | null;
+  commissionManualMargin: number | null;
+  commissionContractValue: number | null;
+  commissionNetValue: number | null;
+  commissionTermMonths: number | null;
+  commissionInterestRate: number | null;
+  commissionAgency: string;
+  commissionContractType: string;
+  commissionPdv: string;
+  commissionStatus: "pendente" | "pago";
+  commissionNotes: string;
+  commissionUpdatedAt: string | null;
 };
 
 export type LoanFunnelOutcomeReport = {
@@ -252,10 +272,16 @@ export type ImportedServant = {
   motivoRecomendacao: string;
   prioridadeAtendimento: "Alta" | "Media" | "Baixa";
   classificacaoConsignado: "Com consignado" | "Sem consignado";
+  cpfRelacionado?: string;
+  seconsigCpf?: string;
+  seconsigMargemAtual?: number;
+  seconsigStatus?: string;
+  seconsigUpdatedAt?: string;
   rawListPayload?: unknown;
   rawDetailPayload?: unknown;
   rubricas: Array<{
     nome: string;
+    tipo?: string;
     valor: number;
   }>;
   importedAt: string;

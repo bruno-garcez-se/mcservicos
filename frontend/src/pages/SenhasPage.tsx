@@ -10,6 +10,11 @@ import {
 } from "../services/passwordsApi";
 import { connectRealtime } from "../services/realtime";
 import { getAgentVpnStatus, setAgentVpnEnabled, type AgentVpnStatus } from "../services/vpnAgentApi";
+import {
+  listServidoresImportados,
+  runServidoresSeconsigTeste,
+  syncServidoresSeconsigTeste,
+} from "../services/loansApi";
 
 type FormState = {
   id?: number;
@@ -40,6 +45,29 @@ const emptyForm: FormState = {
 };
 
 const VPN_STATUS_SYNC_EVENT = "mc:vpn-status-sync";
+const SECONSIG_PENDING_SYNC_STORAGE_KEY = "seconsig_test_sync_pending_v1";
+const SECONSIG_TARGETS_CACHE_STORAGE_KEY = "seconsig_targets_cache_v1";
+const SECONSIG_TEST_MAX_TARGETS = 1;
+
+function extractApiMessage(error: unknown, fallback: string): string {
+  if (
+    typeof error === "object" &&
+    error &&
+    "response" in error &&
+    typeof (error as { response?: unknown }).response === "object" &&
+    (error as { response?: { data?: unknown } }).response &&
+    "data" in (error as { response: { data?: unknown } }).response
+  ) {
+    const data = (error as { response: { data?: unknown } }).response.data;
+    if (typeof data === "string" && data.trim()) return data;
+    if (typeof data === "object" && data && "message" in data) {
+      const message = (data as { message?: unknown }).message;
+      if (typeof message === "string" && message.trim()) return message;
+    }
+  }
+  if (error instanceof Error && error.message.trim()) return error.message;
+  return fallback;
+}
 
 type VpnStatusSyncEventDetail =
   | { kind: "status"; status: AgentVpnStatus }
@@ -151,6 +179,11 @@ export function SenhasPage() {
   const [copiedRowKey, setCopiedRowKey] = useState("");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [vpnInfo, setVpnInfo] = useState("");
+  const [isSyncingSeconsig, setIsSyncingSeconsig] = useState(false);
+  const [isPreparingSeconsigTargets, setIsPreparingSeconsigTargets] = useState(false);
+  const [isSendingSeconsigPending, setIsSendingSeconsigPending] = useState(false);
+  const [isRunningSeconsigFlow, setIsRunningSeconsigFlow] = useState(false);
+  const seconsigVpnLockRef = useRef(false);
   const credentialLinkWindowsRef = useRef<Record<string, Window | null>>({});
 
   const isAdmin = user?.role === "admin";
@@ -186,6 +219,180 @@ export function SenhasPage() {
     return normalized;
   };
 
+  const getCredentialFieldValue = (cred: Credential, aliases: string[]): string => {
+    const displayFields = buildDisplayFields(cred);
+    const normalizedAliases = aliases.map((item) => normalizeFieldName(item));
+    const match = displayFields.find((field) => normalizedAliases.includes(normalizeFieldName(field.name)));
+    return (match?.value ?? "").trim();
+  };
+
+  const loadImportedServantsTargets = async (): Promise<{
+    targets: Array<{ servidorId: number; nome: string; matricula: string }>;
+    skippedWithCpf: number;
+    skippedWithoutMatricula: number;
+  }> => {
+    const pageSize = 500;
+    let page = 1;
+    let totalPages = 1;
+    const byMatricula = new Map<string, { servidorId: number; nome: string; matricula: string }>();
+    let skippedWithCpf = 0;
+    let skippedWithoutMatricula = 0;
+    do {
+      const response = await listServidoresImportados({ page, limit: pageSize });
+      totalPages = Math.max(1, response.totalPages);
+      for (const item of response.items) {
+        const jaTemCpf = Boolean(String(item.seconsigCpf ?? "").trim() || String(item.cpfRelacionado ?? "").trim());
+        if (jaTemCpf) {
+          skippedWithCpf += 1;
+          continue;
+        }
+        const nome = String(item.name ?? "").trim();
+        const matricula = String(item.sourceExternalId ?? "").trim();
+        if (!nome || !matricula) {
+          skippedWithoutMatricula += 1;
+          continue;
+        }
+        if (byMatricula.has(matricula)) continue;
+        byMatricula.set(matricula, { servidorId: item.id, nome, matricula });
+      }
+      page += 1;
+    } while (page <= totalPages);
+    const targets = [...byMatricula.values()];
+    localStorage.setItem(SECONSIG_TARGETS_CACHE_STORAGE_KEY, JSON.stringify(targets));
+    return { targets, skippedWithCpf, skippedWithoutMatricula };
+  };
+
+  const loadCachedSeconsigTargets = (): Array<{ servidorId: number; nome: string; matricula: string }> => {
+    try {
+      const raw = localStorage.getItem(SECONSIG_TARGETS_CACHE_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Array<{ servidorId?: unknown; nome?: unknown; matricula?: unknown }>;
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => ({
+          servidorId: Number(item.servidorId),
+          nome: typeof item.nome === "string" ? item.nome.trim() : "",
+          matricula: typeof item.matricula === "string" ? item.matricula.trim() : "",
+        }))
+        .filter(
+          (item) =>
+            Number.isInteger(item.servidorId) &&
+            item.servidorId > 0 &&
+            item.nome.length > 0 &&
+            item.matricula.length > 0,
+        );
+    } catch {
+      return [];
+    }
+  };
+
+  const loadPendingSeconsigSync = (): Array<{
+    servidorId: number;
+    nomeEncontrado?: string;
+    cpf?: string;
+    margemAtual?: number;
+    status?: string;
+    payload?: unknown;
+  }> => {
+    try {
+      const raw = localStorage.getItem(SECONSIG_PENDING_SYNC_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Array<{
+        servidorId?: unknown;
+        nomeEncontrado?: unknown;
+        cpf?: unknown;
+        margemAtual?: unknown;
+        status?: unknown;
+        payload?: unknown;
+      }>;
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .map((item) => ({
+          servidorId: Number(item.servidorId),
+          nomeEncontrado: typeof item.nomeEncontrado === "string" ? item.nomeEncontrado : undefined,
+          cpf: typeof item.cpf === "string" ? item.cpf : undefined,
+          margemAtual: typeof item.margemAtual === "number" ? item.margemAtual : undefined,
+          status: typeof item.status === "string" ? item.status : undefined,
+          payload: item.payload,
+        }))
+        .filter((item) => Number.isInteger(item.servidorId) && item.servidorId > 0);
+    } catch {
+      return [];
+    }
+  };
+
+  const savePendingSeconsigSync = (
+    items: Array<{
+      servidorId: number;
+      nomeEncontrado?: string;
+      cpf?: string;
+      margemAtual?: number;
+      status?: string;
+      payload?: unknown;
+    }>,
+  ) => {
+    localStorage.setItem(SECONSIG_PENDING_SYNC_STORAGE_KEY, JSON.stringify(items));
+  };
+
+  const sendPendingSeconsigSync = async (): Promise<boolean> => {
+    const pending = loadPendingSeconsigSync();
+    if (pending.length === 0) return false;
+    const result = await syncServidoresSeconsigTeste({ items: pending });
+    localStorage.removeItem(SECONSIG_PENDING_SYNC_STORAGE_KEY);
+    setMessage(`Sincronização pendente enviada: ${result.atualizados} atualizados.`);
+    return true;
+  };
+
+  const delay = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+
+  const setSeconsigVpnState = async (shouldEnable: boolean): Promise<{ ok: boolean; reason?: string }> => {
+    const vpnStatus = await getAgentVpnStatus();
+    if (!vpnStatus.agentReachable) {
+      return { ok: false, reason: "Agente VPN não detectado neste computador." };
+    }
+    if (!vpnStatus.configured || vpnStatus.needsSelection || !vpnStatus.connectionExists) {
+      return { ok: false, reason: vpnStatus.message || "Configure a VPN no agente para continuar." };
+    }
+    if (vpnStatus.connected === shouldEnable) {
+      return { ok: true };
+    }
+    const toggledStatus = await setAgentVpnEnabled(shouldEnable);
+    if (toggledStatus.connected === shouldEnable) {
+      return { ok: true };
+    }
+    return {
+      ok: false,
+      reason:
+        toggledStatus.message ||
+        (shouldEnable ? "Não foi possível ligar a VPN automaticamente." : "Não foi possível desligar a VPN automaticamente."),
+    };
+  };
+
+  const refreshSeconsigTab = (cred: Credential): boolean => {
+    const rawUrl = cred.linkUrl ?? "";
+    const navigableUrl = getNavigableUrl(rawUrl);
+    if (!navigableUrl) return false;
+    const keyByCredential = getCredentialWindowKey(cred.id);
+    const targetByUrl = getCredentialLinkTarget(navigableUrl);
+    const existingWindow = credentialLinkWindowsRef.current[keyByCredential] ?? credentialLinkWindowsRef.current[targetByUrl] ?? null;
+    if (existingWindow) {
+      try {
+        existingWindow.focus();
+        existingWindow.location.href = navigableUrl;
+        credentialLinkWindowsRef.current[keyByCredential] = existingWindow;
+        credentialLinkWindowsRef.current[targetByUrl] = existingWindow;
+        return true;
+      } catch {
+        // Se a aba existente estiver inacessível, tenta abrir novamente.
+      }
+    }
+    const openedWindow = window.open(navigableUrl, keyByCredential || targetByUrl);
+    if (!openedWindow) return false;
+    credentialLinkWindowsRef.current[keyByCredential] = openedWindow;
+    credentialLinkWindowsRef.current[targetByUrl] = openedWindow;
+    return true;
+  };
+
   useEffect(() => {
     async function loadData() {
       setLoading(true);
@@ -202,6 +409,18 @@ export function SenhasPage() {
     }
 
     void loadData();
+  }, []);
+
+  useEffect(() => {
+    const pending = loadPendingSeconsigSync();
+    if (pending.length === 0) return;
+    void (async () => {
+      try {
+        await sendPendingSeconsigSync();
+      } catch {
+        // Mantém pendente para próxima tentativa.
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -296,6 +515,288 @@ export function SenhasPage() {
     setCredentials((prev) => prev.filter((item) => item.id !== id));
   };
 
+  const onSyncSeconsigTeste = async (cred: Credential) => {
+    if (isSyncingSeconsig) return;
+    const baseUrl = (cred.linkUrl ?? "").trim();
+    const username = getCredentialFieldValue(cred, ["login", "usuario", "usuário", "user"]);
+    const password = getCredentialFieldValue(cred, ["senha", "password"]);
+    if (!baseUrl) {
+      setMessage("Credencial SECONSIG incompleta. Confirme o link do sistema.");
+      return;
+    }
+    setIsSyncingSeconsig(true);
+    seconsigVpnLockRef.current = true;
+    setMessage("Preparando matrículas importadas para sincronização de teste...");
+    try {
+      const vpnStatus = await getAgentVpnStatus();
+      if (vpnStatus.agentReachable && vpnStatus.configured && vpnStatus.connectionExists && !vpnStatus.connected) {
+        const toggledStatus = await setAgentVpnEnabled(true);
+        if (!toggledStatus.connected) {
+          setMessage(
+            toggledStatus.message ||
+              "Não foi possível ligar a VPN automaticamente para executar a sincronização do SECONSIG.",
+          );
+          return;
+        }
+        setVpnInfo("VPN ligada automaticamente para sincronização SECONSIG.");
+      }
+
+      let targets: Array<{ servidorId: number; nome: string; matricula: string }> = [];
+      let skippedWithCpf = 0;
+      try {
+        const prepared = await loadImportedServantsTargets();
+        targets = prepared.targets;
+        skippedWithCpf = prepared.skippedWithCpf;
+      } catch {
+        targets = loadCachedSeconsigTargets();
+        if (targets.length > 0) {
+          setMessage(
+            `Sem conexão para atualizar a lista agora. Usando cache local com ${targets.length} matrícula(s) elegível(is).`,
+          );
+        }
+      }
+      if (targets.length === 0) {
+        setMessage(
+          "Sem matrículas elegíveis no cache local. Com internet, prepare a lista novamente e tente de novo.",
+        );
+        return;
+      }
+
+      const limitedTargets = targets.slice(0, SECONSIG_TEST_MAX_TARGETS);
+      setMessage(
+        `Executando automação SECONSIG (teste) para ${limitedTargets.length} matrícula(s) de validação...`,
+      );
+      const syncInput = {
+        baseUrl,
+        username,
+        password,
+        grupoConsignante: "GOVERNO DO ESTADO (ATIVOS - SEPLAG)",
+        targets: limitedTargets,
+      };
+      const agentResult = await runServidoresSeconsigTeste(syncInput);
+
+      const itemsToSync = agentResult.items
+        .filter((item) => item.found && item.exactMatch)
+        .map((item) => ({
+          servidorId: item.servidorId,
+          nomeEncontrado: item.nomeEncontrado,
+          cpf: item.cpf,
+          margemAtual: item.margemAtual,
+          status: item.status,
+          payload: item.payload,
+        }));
+
+      if (itemsToSync.length === 0) {
+        const processados = agentResult.stats?.processados ?? agentResult.items.length;
+        const encontrados = agentResult.stats?.encontrados ?? 0;
+        const naoEncontrados = agentResult.stats?.naoEncontrados ?? 0;
+        const falhas = agentResult.stats?.falhas ?? 0;
+        const firstError = agentResult.items.find((item) => item.error)?.error;
+        const firstName = agentResult.items.find((item) => item.error)?.nomePesquisado;
+        setMessage(
+          firstError
+            ? `SECONSIG teste sem atualização. Processados: ${processados}, encontrados: ${encontrados}, não encontrados: ${naoEncontrados}, falhas: ${falhas}. Primeiro erro (${firstName ?? "item"}): ${firstError}`
+            : `SECONSIG teste sem atualização. Processados: ${processados}, encontrados: ${encontrados}, não encontrados: ${naoEncontrados}, falhas: ${falhas}.`,
+        );
+        return;
+      }
+
+      try {
+        const syncResult = await syncServidoresSeconsigTeste({ items: itemsToSync });
+        localStorage.removeItem(SECONSIG_PENDING_SYNC_STORAGE_KEY);
+        const processados = agentResult.stats?.processados ?? agentResult.items.length;
+        const desabilitados = agentResult.items.filter((item) =>
+          String(item.status ?? "")
+            .toLowerCase()
+            .includes("desabil"),
+        ).length;
+        setMessage(
+          `SECONSIG teste concluído. Processados: ${processados}, pulados por CPF: ${skippedWithCpf}, desabilitados: ${desabilitados}, atualizados: ${syncResult.atualizados}.`,
+        );
+      } catch {
+        savePendingSeconsigSync(itemsToSync);
+        setMessage(
+          "SECONSIG executado localmente. Sem conexão com o servidor agora, os dados ficaram pendentes e serão enviados automaticamente quando voltar a conexão.",
+        );
+      }
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Falha ao sincronizar dados do SECONSIG em modo teste."));
+    } finally {
+      setIsSyncingSeconsig(false);
+      seconsigVpnLockRef.current = false;
+    }
+  };
+
+  const onPrepareSeconsigTargetsOffline = async () => {
+    if (isPreparingSeconsigTargets) return;
+    setIsPreparingSeconsigTargets(true);
+    seconsigVpnLockRef.current = true;
+    setMessage("Preparando lista offline de importados...");
+    try {
+      const prepared = await loadImportedServantsTargets();
+      setMessage(
+        `Lista offline preparada: ${prepared.targets.length} elegíveis, ${prepared.skippedWithCpf} pulados por CPF e ${prepared.skippedWithoutMatricula} sem matrícula.`,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.trim()) {
+        setMessage(`Falha ao preparar lista offline: ${error.message}`);
+      } else {
+        setMessage("Falha ao preparar lista offline de importados.");
+      }
+    } finally {
+      setIsPreparingSeconsigTargets(false);
+      seconsigVpnLockRef.current = false;
+    }
+  };
+
+  const onSendSeconsigPendingNow = async () => {
+    if (isSendingSeconsigPending) return;
+    setIsSendingSeconsigPending(true);
+    try {
+      const sent = await sendPendingSeconsigSync();
+      if (!sent) {
+        setMessage("Não há pendências SECONSIG para enviar.");
+      }
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Falha ao enviar pendências SECONSIG."));
+    } finally {
+      setIsSendingSeconsigPending(false);
+    }
+  };
+
+  const onRunSeconsigFlow = async (cred: Credential) => {
+    if (isRunningSeconsigFlow || isSyncingSeconsig || isPreparingSeconsigTargets || isSendingSeconsigPending) return;
+
+    const baseUrl = (cred.linkUrl ?? "").trim();
+    const username = getCredentialFieldValue(cred, ["login", "usuario", "usuário", "user"]);
+    const password = getCredentialFieldValue(cred, ["senha", "password"]);
+    if (!baseUrl) {
+      setMessage("Credencial SECONSIG incompleta. Confirme o link do sistema.");
+      return;
+    }
+
+    setIsRunningSeconsigFlow(true);
+    seconsigVpnLockRef.current = true;
+    try {
+      setIsPreparingSeconsigTargets(true);
+      setMessage("1/6 Preparando lista offline de importados...");
+      const prepared = await loadImportedServantsTargets();
+      const targets = prepared.targets;
+      setIsPreparingSeconsigTargets(false);
+
+      if (targets.length === 0) {
+        setMessage("Nenhum servidor importado encontrado para executar o SECONSIG.");
+        return;
+      }
+
+      setMessage("2/6 Ligando VPN automaticamente...");
+      const vpnOn = await setSeconsigVpnState(true);
+      if (!vpnOn.ok) {
+        setMessage(vpnOn.reason || "Não foi possível ligar a VPN.");
+        return;
+      }
+      setVpnInfo("VPN ligada automaticamente para execução do SECONSIG.");
+
+      setMessage("3/6 Atualizando aba do SECONSIG...");
+      const tabReady = refreshSeconsigTab(cred);
+      if (!tabReady) {
+        setMessage("Não foi possível abrir/atualizar a aba do SECONSIG. Verifique bloqueio de pop-up.");
+        return;
+      }
+      await delay(1800);
+
+      setIsSyncingSeconsig(true);
+      setMessage(`4/6 Executando automação SECONSIG para ${targets.length} servidor(es)...`);
+      const agentResult = await runServidoresSeconsigTeste({
+        baseUrl,
+        username,
+        password,
+        grupoConsignante: "GOVERNO DO ESTADO (ATIVOS - SEPLAG)",
+        targets,
+      });
+      setIsSyncingSeconsig(false);
+
+      const itemsToSync = agentResult.items
+        .filter((item) => item.found && item.exactMatch)
+        .map((item) => ({
+          servidorId: item.servidorId,
+          nomeEncontrado: item.nomeEncontrado,
+          cpf: item.cpf,
+          margemAtual: item.margemAtual,
+          status: item.status,
+          payload: item.payload,
+        }));
+
+      setMessage("5/6 Salvando resultados e desligando VPN...");
+      if (itemsToSync.length > 0) {
+        try {
+          const syncResult = await syncServidoresSeconsigTeste({ items: itemsToSync });
+          localStorage.removeItem(SECONSIG_PENDING_SYNC_STORAGE_KEY);
+          setMessage(`5/6 Dados salvos: ${syncResult.atualizados} atualizados. Desligando VPN...`);
+        } catch {
+          savePendingSeconsigSync(itemsToSync);
+          setMessage("5/6 Sem internet para salvar agora. Dados guardados em pendências locais. Desligando VPN...");
+        }
+      }
+
+      const vpnOff = await setSeconsigVpnState(false);
+      if (vpnOff.ok) {
+        setVpnInfo("VPN desligada automaticamente após execução do SECONSIG.");
+      }
+      await delay(1200);
+
+      setIsSendingSeconsigPending(true);
+      setMessage("6/6 Enviando pendências SECONSIG para o sistema...");
+      let sentPending = false;
+      try {
+        sentPending = await sendPendingSeconsigSync();
+      } catch {
+        sentPending = false;
+      } finally {
+        setIsSendingSeconsigPending(false);
+      }
+
+      const processados = agentResult.stats?.processados ?? agentResult.items.length;
+      const encontrados = agentResult.stats?.encontrados ?? itemsToSync.length;
+      const naoEncontrados = agentResult.stats?.naoEncontrados ?? Math.max(0, processados - encontrados);
+      const falhas = agentResult.stats?.falhas ?? agentResult.items.filter((item) => item.error).length;
+      const firstError = agentResult.items.find((item) => item.error)?.error;
+      const desabilitados = agentResult.items.filter((item) =>
+        String(item.status ?? "")
+          .toLowerCase()
+          .includes("desabil"),
+      ).length;
+
+      if (processados === 0) {
+        setMessage("Concluído: nenhum servidor processado.");
+        return;
+      }
+
+      if (itemsToSync.length === 0) {
+        setMessage(
+          firstError
+            ? `Concluído sem atualização. Processados: ${processados}, encontrados: ${encontrados}, não encontrados: ${naoEncontrados}, falhas: ${falhas}. Primeiro erro: ${firstError}`
+            : `Concluído sem atualização. Processados: ${processados}, encontrados: ${encontrados}, não encontrados: ${naoEncontrados}, falhas: ${falhas}.`,
+        );
+        return;
+      }
+
+      setMessage(
+        sentPending
+          ? `Concluído. Processados: ${processados}, pulados por CPF: ${prepared.skippedWithCpf}, desabilitados: ${desabilitados}, atualizados: ${itemsToSync.length}.`
+          : `Concluído com pendência. Processados: ${processados}, pulados por CPF: ${prepared.skippedWithCpf}, desabilitados: ${desabilitados}, coletados: ${itemsToSync.length}.`,
+      );
+    } catch (error) {
+      setMessage(extractApiMessage(error, "Falha no fluxo automático do SECONSIG."));
+    } finally {
+      setIsPreparingSeconsigTargets(false);
+      setIsSyncingSeconsig(false);
+      setIsSendingSeconsigPending(false);
+      setIsRunningSeconsigFlow(false);
+      seconsigVpnLockRef.current = false;
+    }
+  };
+
   const onExtraFieldDrop = (dropIndex: number) => {
     if (draggingExtraIndex === null || draggingExtraIndex === dropIndex) return;
 
@@ -376,7 +877,15 @@ export function SenhasPage() {
     window.dispatchEvent(new CustomEvent<VpnStatusSyncEventDetail>(VPN_STATUS_SYNC_EVENT, { detail }));
   };
   const syncVpnByAccessMode = async (accessMode: "web" | "vpn") => {
+    if (seconsigVpnLockRef.current || isSyncingSeconsig || isPreparingSeconsigTargets) {
+      pushVpnInfo("Troca automática de VPN bloqueada durante operação SECONSIG.");
+      return;
+    }
     const shouldEnableVpn = accessMode === "vpn";
+    if (!shouldEnableVpn) {
+      // Não desliga VPN automaticamente ao navegar por credenciais web.
+      return;
+    }
     const currentStatus = await getAgentVpnStatus();
     emitVpnStatusSync(currentStatus);
 
@@ -544,6 +1053,7 @@ export function SenhasPage() {
           {credentials.map((cred) => {
             const accessMode = cred.accessMode === "vpn" ? "vpn" : "web";
             const displayFields = buildDisplayFields(cred);
+            const isSeconsigCredential = cred.systemName.trim().toLowerCase().includes("seconsig");
             return (
               <article key={cred.id} className="credential-card">
                 <span className={`credential-access-badge ${accessMode === "vpn" ? "is-vpn" : "is-web"}`}>
@@ -650,6 +1160,56 @@ export function SenhasPage() {
 
                 {isAdmin ? (
                   <div className="row">
+                    {isSeconsigCredential ? (
+                      <>
+                        <p className="muted-text" style={{ margin: "0 0 4px", fontSize: "11px" }}>
+                          Importação automática: prepara lista, liga VPN, atualiza aba, importa, desliga VPN e envia pendências.
+                        </p>
+                        <button
+                          type="button"
+                          className="transaction-top-action transaction-top-action-import"
+                          onClick={() => void onRunSeconsigFlow(cred)}
+                          disabled={
+                            isRunningSeconsigFlow || isPreparingSeconsigTargets || isSyncingSeconsig || isSendingSeconsigPending
+                          }
+                        >
+                          {isRunningSeconsigFlow ? "IMPORTAR SECONSIG (executando...)" : "IMPORTAR SECONSIG"}
+                        </button>
+                        <p className="muted-text" style={{ margin: "4px 0 2px", fontSize: "11px" }}>
+                          Modo manual (fallback):
+                        </p>
+                        {!isRunningSeconsigFlow ? (
+                          <>
+                            <button
+                              type="button"
+                              className="transaction-top-action transaction-top-action-import"
+                              onClick={() => void onPrepareSeconsigTargetsOffline()}
+                              disabled={isPreparingSeconsigTargets || isSyncingSeconsig || isSendingSeconsigPending}
+                            >
+                              {isPreparingSeconsigTargets
+                                ? "1) Preparando..."
+                                : "1) Preparar lista offline (Importados)"}
+                            </button>
+                            <button
+                              type="button"
+                              className="transaction-top-action transaction-top-action-import"
+                              onClick={() => void onSyncSeconsigTeste(cred)}
+                              disabled={isSyncingSeconsig || isPreparingSeconsigTargets || isSendingSeconsigPending}
+                            >
+                              {isSyncingSeconsig ? "2) Sincronizando..." : "2) Importar SECONSIG (teste)"}
+                            </button>
+                            <button
+                              type="button"
+                              className="transaction-top-action transaction-top-action-import"
+                              onClick={() => void onSendSeconsigPendingNow()}
+                              disabled={isSendingSeconsigPending || isSyncingSeconsig || isPreparingSeconsigTargets}
+                            >
+                              {isSendingSeconsigPending ? "3) Enviando pendências..." : "3) Enviar pendências SECONSIG"}
+                            </button>
+                          </>
+                        ) : null}
+                      </>
+                    ) : null}
                     <button
                       type="button"
                       className="transaction-icon-button danger"
@@ -667,6 +1227,7 @@ export function SenhasPage() {
         </div>
         {copyInfo ? <p className="copy-feedback">{`${feedbackLabel(copyInfo)}: ${copyInfo}`}</p> : null}
         {vpnInfo ? <p className="copy-feedback">{`${feedbackLabel(vpnInfo)}: ${vpnInfo}`}</p> : null}
+        {message ? <p className="copy-feedback">{`${feedbackLabel(message)}: ${message}`}</p> : null}
       </section>
 
       {isFormOpen ? (
